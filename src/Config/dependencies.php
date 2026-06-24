@@ -29,6 +29,7 @@ use App\Domain\Knowledge\KnowledgeLinkService;
 use App\Domain\Project\ProjectMemberRepositoryInterface;
 use App\Domain\Project\ProjectStatusUpdateRepositoryInterface;
 use App\Domain\Project\ProjectRepositoryInterface;
+use App\Application\Http\Controllers\ProjectStatusUpdateController;
 use App\Domain\Rfc\RfcCommentRepositoryInterface;
 use App\Domain\Rfc\RfcRepositoryInterface;
 use App\Domain\Rfc\RfcService;
@@ -135,6 +136,11 @@ return [
 
     ProjectStatusUpdateRepositoryInterface::class => fn (ContainerInterface $c) =>
         new MySqlProjectStatusUpdateRepository($c->get(PDO::class), $c->get('current_workspace_id')),
+
+    ProjectStatusUpdateController::class => fn (ContainerInterface $c) => new ProjectStatusUpdateController(
+        $c->get(ProjectRepositoryInterface::class),
+        $c->get(ProjectStatusUpdateRepositoryInterface::class),
+    ),
 
     AiContextExportRepositoryInterface::class => fn (ContainerInterface $c) =>
         new MySqlAiContextExportRepository($c->get(PDO::class), $c->get('current_workspace_id')),

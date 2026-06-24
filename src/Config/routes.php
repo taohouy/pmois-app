@@ -14,6 +14,7 @@ use App\Application\Http\Controllers\KnowledgeArticleController;
 use App\Application\Http\Controllers\KnowledgeLinkController;
 use App\Application\Http\Controllers\ProjectController;
 use App\Application\Http\Controllers\ProjectMemberController;
+use App\Application\Http\Controllers\ProjectStatusUpdateController;
 use App\Application\Http\Controllers\RfcController;
 use App\Application\Http\Controllers\WorkspaceController;
 use App\Application\Http\Controllers\WorkspaceMemberController;
@@ -58,6 +59,14 @@ return function (App $app, ContainerInterface $container): void {
             ->add(new RequiresPermissionMiddleware($resolver, 'project.create'));
         $group->put('/projects/{id}/close', ProjectController::class . ':close')
             ->add(new RequiresPermissionMiddleware($resolver, 'project.close', 'id'));
+
+        // ===== Inbound Status API =====
+        $group->post('/projects/{project_id}/status', ProjectStatusUpdateController::class . ':submit')
+            ->add(new RequiresPermissionMiddleware($resolver, 'project_status_update.create', 'project_id'));
+        $group->get('/projects/{project_id}/status', ProjectStatusUpdateController::class . ':latest')
+            ->add(new RequiresPermissionMiddleware($resolver, 'project_status_update.view', 'project_id'));
+        $group->get('/projects/{project_id}/status/history', ProjectStatusUpdateController::class . ':history')
+            ->add(new RequiresPermissionMiddleware($resolver, 'project_status_update.view', 'project_id'));
 
         $group->get('/projects/{project_id}/members', ProjectMemberController::class . ':index')
             ->add(new RequiresPermissionMiddleware($resolver, 'project.view', 'project_id'));
