@@ -1,0 +1,14 @@
+-- แก้ไข (พบจากการทดสอบจริงบน server): เดิมไฟล์นี้ตั้งใจสร้าง FULLTEXT INDEX WITH PARSER ngram
+-- แต่ server จริงรัน MariaDB ซึ่งไม่มี ngram parser plugin เลย (error #1128 Function
+-- 'ngram' is not defined) -- เปลี่ยนมาใช้ SQL LIKE-based search แทนที่ระดับ Repository
+-- (ดู MySqlKnowledgeArticleRepository::search()) จึงไม่จำเป็นต้องมี FULLTEXT INDEX ใดๆ
+--
+-- ไฟล์นี้เปลี่ยนเป็น no-op เพื่อให้ลำดับเลข migration ต่อเนื่องเหมือนเดิม
+--
+-- ⚠️ แก้รอบที่ 2: เดิมใช้ "SELECT 1;" เป็น no-op แต่ผิด -- SELECT คืน result set
+-- กลับมา ทำให้ cursor ค้างเปิดบน connection พอ migrate.php รัน query ถัดไป (INSERT
+-- ลง schema_migrations) บน connection เดียวกัน MySQL/MariaDB จึง error
+-- "2014 Cannot execute queries while other unbuffered queries are active"
+-- เปลี่ยนมาใช้ "DO 0;" แทน เพราะ DO statement ออกแบบมาสำหรับ no-op โดยเฉพาะ
+-- (ประเมินค่า expression แต่ไม่คืน result set กลับมาเลย)
+DO 0;

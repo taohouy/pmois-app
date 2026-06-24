@@ -1,0 +1,20 @@
+CREATE TABLE knowledge_articles (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    workspace_id BIGINT UNSIGNED NOT NULL,
+    project_id BIGINT UNSIGNED NULL,
+    title VARCHAR(200) NOT NULL,
+    category VARCHAR(100) NULL,
+    content LONGTEXT NOT NULL,
+    status ENUM('draft','published','archived') NOT NULL DEFAULT 'draft',
+    authored_by BIGINT UNSIGNED NOT NULL,
+    published_at TIMESTAMP NULL,
+    created_by BIGINT UNSIGNED NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_ka_workspace (workspace_id),
+    KEY idx_ka_project (project_id),
+    CONSTRAINT fk_ka_workspace FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    CONSTRAINT fk_ka_project FOREIGN KEY (project_id) REFERENCES projects(id),
+    CONSTRAINT fk_ka_authored_by FOREIGN KEY (authored_by) REFERENCES users(id),
+    CONSTRAINT fk_ka_created_by FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

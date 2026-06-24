@@ -1,0 +1,11 @@
+CREATE TABLE rfc_comments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    rfc_id BIGINT UNSIGNED NOT NULL,
+    comment_text TEXT NOT NULL,
+    commented_by BIGINT UNSIGNED NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_rfc_comments_rfc (rfc_id),
+    CONSTRAINT fk_rfccomment_rfc FOREIGN KEY (rfc_id) REFERENCES rfcs(id),
+    CONSTRAINT fk_rfccomment_user FOREIGN KEY (commented_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

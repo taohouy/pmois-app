@@ -1,0 +1,22 @@
+CREATE TABLE governance_adoptions (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    workspace_id BIGINT UNSIGNED NOT NULL,
+    project_id BIGINT UNSIGNED NOT NULL,
+    governance_version_id BIGINT UNSIGNED NOT NULL,
+    adoption_status ENUM('in_progress','compliant','non_compliant','retired') NOT NULL DEFAULT 'in_progress',
+    status ENUM('active','superseded') NOT NULL DEFAULT 'active',
+    adopted_date DATE NOT NULL,
+    compliance_note TEXT NULL,
+    reviewed_by BIGINT UNSIGNED NULL,
+    reviewed_at TIMESTAMP NULL,
+    created_by BIGINT UNSIGNED NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_adoption_project (project_id),
+    KEY idx_adoption_version (governance_version_id),
+    CONSTRAINT fk_adoption_workspace FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    CONSTRAINT fk_adoption_project FOREIGN KEY (project_id) REFERENCES projects(id),
+    CONSTRAINT fk_adoption_version FOREIGN KEY (governance_version_id) REFERENCES governance_versions(id),
+    CONSTRAINT fk_adoption_reviewed_by FOREIGN KEY (reviewed_by) REFERENCES users(id),
+    CONSTRAINT fk_adoption_created_by FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

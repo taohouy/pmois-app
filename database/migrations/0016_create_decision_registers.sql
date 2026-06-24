@@ -1,0 +1,25 @@
+-- ต้องสร้างก่อน rfcs เพราะ rfcs.resulting_decision_id ชี้มาที่นี่
+CREATE TABLE decision_registers (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    workspace_id BIGINT UNSIGNED NOT NULL,
+    project_id BIGINT UNSIGNED NULL,
+    related_governance_record_id BIGINT UNSIGNED NULL,
+    category ENUM('technical','architecture','process','governance','vendor','budget','scope','organizational','other') NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    context TEXT NULL,
+    decision_description TEXT NOT NULL,
+    decision_date DATE NOT NULL,
+    decided_by BIGINT UNSIGNED NOT NULL,
+    status ENUM('proposed','approved','rejected','superseded') NOT NULL DEFAULT 'proposed',
+    impact_level ENUM('low','medium','high') NULL,
+    created_by BIGINT UNSIGNED NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_decision_workspace (workspace_id),
+    KEY idx_decision_project (project_id),
+    CONSTRAINT fk_decision_workspace FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    CONSTRAINT fk_decision_project FOREIGN KEY (project_id) REFERENCES projects(id),
+    CONSTRAINT fk_decision_govrecord FOREIGN KEY (related_governance_record_id) REFERENCES governance_records(id),
+    CONSTRAINT fk_decision_decided_by FOREIGN KEY (decided_by) REFERENCES users(id),
+    CONSTRAINT fk_decision_created_by FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
