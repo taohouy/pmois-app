@@ -3,8 +3,8 @@
 **Document type:** Verification Report  
 **Document code:** VER-project-scoped-token-enforcement  
 **Version:** 1  
-**Status:** Draft  
-**Review status:** Pending  
+**Status:** Complete  
+**Review status:** Pending CTO Sign-Off  
 **Reviewed by:** —  
 **Approval status:** Pending  
 **Approved by:** —  
@@ -35,15 +35,15 @@
 
 | Project | Code | ID (runtime) | Role in test |
 |---------|------|-------------|--------------|
-| PMOIS | `PMOIS` | to be confirmed | Cross-project denial target |
-| MJU Asset | `MJU-ASSET` | to be confirmed | Primary integration project |
+| PMOIS | `PMOIS` | **3** | Cross-project denial target |
+| MJU Asset | `MJU-ASSET` | **4** | Primary integration project |
 
 ### Tokens under test
 
 | Token | Type | Scope | Source |
 |-------|------|-------|--------|
-| ADMIN token | Workspace-level (`project_id = NULL`) | All projects | Existing pilot token |
-| MJU Asset token | Project-scoped (`project_id = <mju_id>`) | MJU Asset project only | Created via API after migration 0032 |
+| ADMIN token | Workspace-level (`project_id = NULL`) | All projects | New Production ADMIN token (token id: 7) |
+| MJU Asset token | Project-scoped (`project_id = 4`) | MJU Asset project only | Created via `POST /api/v1/auth/tokens` — token id: 8, name: "MJU Asset Integration Token" |
 
 ### Pre-conditions
 
@@ -410,27 +410,39 @@ GET /api/v1/projects/{MJU_ID}/status
 
 | Test ID | Description | Expected HTTP | Actual HTTP | Result |
 |---------|-------------|---------------|-------------|--------|
-| PASS-01 | POST status for MJU Asset | 201 | | |
-| PASS-02 | GET latest status for MJU Asset | 200 | | |
-| PASS-03 | GET status history for MJU Asset | 200 | | |
-| FAIL-01 | POST to PMOIS project with MJU token | 403 | | |
-| FAIL-02 | GET from PMOIS project with MJU token | 403 | | |
-| FAIL-03 | GET /projects (workspace-level) with MJU token | 403 | | |
-| FAIL-04 | GET /auth/tokens (workspace-level) with MJU token | 403 | | |
-| FAIL-05 | Invalid bearer token | 401 | | |
-| FAIL-06 | Missing Authorization header | 401 | | |
+| PASS-01 | POST status for MJU Asset | 201 | 201 | ✅ PASS |
+| PASS-02 | GET latest status for MJU Asset | 200 | 200 | ✅ PASS |
+| PASS-03 | GET status history for MJU Asset | 200 | 200 | ✅ PASS |
+| FAIL-01 | POST to PMOIS project with MJU token | 403 | 403 | ✅ PASS |
+| FAIL-02 | GET from PMOIS project with MJU token | 403 | 403 | ✅ PASS |
+| FAIL-03 | GET /projects (workspace-level) with MJU token | 403 | 403 | ✅ PASS |
+| FAIL-04 | GET /auth/tokens (workspace-level) with MJU token | 403 | 403 | ✅ PASS |
+| FAIL-05 | Invalid bearer token | 401 | 401 | ✅ PASS |
+| FAIL-06 | Missing Authorization header | 401 | 401 | ✅ PASS |
+| BC-01 | ADMIN token POST status for MJU Asset | 201 | 201 | ✅ PASS |
+| BC-02 | ADMIN token GET /projects (workspace-level) | 200 | 200 | ✅ PASS |
+| BC-03 | ADMIN token GET PMOIS status | 200 | 200 | ✅ PASS |
 
-**Overall result:** [ ] PASS — all 9 scenarios matched expected HTTP status  
-**Verified by:**  
-**Verification date:**
+**Overall result:** ✅ PASS — all 12 scenarios matched expected HTTP status  
+**Verified by:** Claude Code (on behalf of CTO)  
+**Verification date:** 2026-06-25  
+**Environment:** Production — `https://pmo.jaideedigital.com/api`
 
 ---
 
 ## 6. Observations
 
-> To be completed after running verification. Include any unexpected behaviour, edge cases discovered, or deviations from expected results.
+### Finding: em dash in JSON body breaks Bash one-liner curl
 
-### Known behaviours to note during verification
+During the first verification run, PASS-01 and BC-01 returned HTTP 422 (`VALIDATION_ERROR`). Root cause: the em dash character (`—`) in the summary string `"Verification test — initial status submission"` was mishandled by the Bash shell when passed via `-d` flag, resulting in a malformed JSON body. The API correctly rejected it as missing required fields.
+
+**Resolution:** Switched to `--data-raw` with ASCII-only body. Both scenarios returned HTTP 201 as expected. This is a test-script encoding artefact — not an API bug.
+
+**Action:** Verification runbook (`dep-phase4-project-scoped-token-runbook.md`) should be noted to use `--data-raw` and ASCII-only summary strings. No code change required.
+
+---
+
+### Known behaviours confirmed during verification
 
 1. **`project_id` in PASS responses** — the `POST /status` response body should contain the correct `project_id`. Confirm it matches `{MJU_ID}` and not another value.
 
@@ -444,17 +456,20 @@ GET /api/v1/projects/{MJU_ID}/status
 
 ## 7. Conclusion
 
-> To be completed after verification.
+Project-Scoped Token Enforcement (Phase 4) is **functioning correctly in production**.
 
-This section should confirm:
+All 12 verification scenarios passed on 2026-06-25 against `https://pmo.jaideedigital.com/api`:
 
-- Whether project-scoped token enforcement is functioning correctly in production.
-- Whether the MJU Asset integration is cleared for use.
-- Any open items or follow-up actions required before freezing PMOIS API v1.0.
+- **Project isolation is enforced:** the MJU Asset token correctly accesses only its own project and is blocked from PMOIS and all workspace-level routes.
+- **Backward compatibility is preserved:** the ADMIN token (workspace-level, `project_id = NULL`) retains full access to all projects and workspace routes — no regression from Phase 4.
+- **Auth layer is correct:** invalid and missing tokens are rejected with HTTP 401 before reaching the project scope check.
 
-**Recommended sign-off criteria:**
+**MJU Asset integration status:** ✅ Cleared for production use.
 
-All 9 test scenarios must match expected HTTP status codes exactly. Any deviation is a blocker and must be investigated before clearing MJU Asset for production integration.
+**Open items before PMOIS API v1.0 freeze:**
+- Known limitation (flagged in Security Design): no server-side validation that `project_id` at token creation belongs to the same workspace. FK prevents non-existent projects but not cross-workspace references. Accepted for v1.0; flagged as future hardening.
+
+**Recommendation:** CTO may sign off this report to proceed with PMOIS API v1.0 freeze.
 
 ---
 
