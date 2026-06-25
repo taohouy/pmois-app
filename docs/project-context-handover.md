@@ -5,24 +5,26 @@
 **Reason:** Conversation context near capacity — handover for new session  
 **GitLab repository:** `https://gitlab.com/jaideedigital/pmois-app.git`  
 **Production URL:** `https://pmo.jaideedigital.com/api`  
-**Latest commit:** `af84b92` on `master`
+**Latest commit:** `95cd104` on `master`
 
 ---
 
 ## 1. Current Project Status
 
-**Phase 4 — Project-Scoped Token Enforcement**
+**🎉 PMOIS API v1.0 — FROZEN**
+
+Phase 4 (Project-Scoped Token Enforcement) completed and approved by CTO on 2026-06-25.
 
 | Item | Status |
 |------|--------|
-| Implementation | Complete (committed, pushed) |
-| Production deployment (FTP upload) | Complete |
-| Database migrations 0031 + 0032 | Applied via phpMyAdmin |
-| Production health check | PASS — `/api/v1/health` = `{"status":"ok"}` |
-| Production ADMIN token | **Ready** — new token generated successfully |
-| MJU Asset project-scoped token | Not yet created — next step |
-| Verification (9 scenarios) | **Pending** — ready to execute |
-| Verification Report | Draft — results table empty, awaiting execution |
+| Implementation | ✅ Complete |
+| Production deployment (FTP upload) | ✅ Complete |
+| Database migrations 0031 + 0032 | ✅ Applied |
+| Production health check | ✅ PASS |
+| Production verification (12 scenarios) | ✅ All PASS |
+| Verification Report | ✅ Approved by CTO — 2026-06-25 |
+| MJU Asset project-scoped token | ✅ Created — token id: 8 |
+| **PMOIS API v1.0** | ✅ **FROZEN** — ADR-0001 |
 
 ---
 
@@ -203,35 +205,33 @@ echo "======================================"
 
 ## 8. Current Blockers
 
-None. Implementation is complete, deployed, and ADMIN token is ready.
-
-No code or architecture blockers.
+None. PMOIS API v1.0 is frozen. No open blockers.
 
 ---
 
-## 9. Required Production Commands (Summary)
+## 9. PMOIS API v1.0 Milestone Summary
 
-| Step | Who | Action |
-|------|-----|--------|
-| 1 | Engineer | Use Production ADMIN token locally — confirm it authenticates |
-| 2 | Engineer | `GET /api/v1/projects` — retrieve `MJU_ID` and `PMOIS_ID` |
-| 3 | Engineer | `POST /api/v1/auth/tokens` with `project_id: MJU_ID` — create MJU Asset project-scoped token; save raw token |
-| 4 | Engineer | Run one-block verification script (Step C in Section 7) |
-| 5 | Engineer | Fill in Verification Report with actual results |
-| 6 | Engineer | Submit Verification Report for CTO sign-off |
-| 7 | CTO | Sign off → freeze PMOIS API v1.0 |
+| Milestone | Date | Outcome |
+|-----------|------|---------|
+| Phase 1 — Core API | Prior to 2026-06-25 | Complete |
+| Phase 2 — Project Status Updates | Prior to 2026-06-25 | Complete |
+| Phase 3 — AI Access Control | Prior to 2026-06-25 | Complete |
+| Phase 4 — Project-Scoped Token Enforcement | 2026-06-25 | Complete |
+| Production Verification (12 scenarios) | 2026-06-25 | All PASS |
+| CTO Sign-off | 2026-06-25 | Approved |
+| **PMOIS API v1.0 Freeze** | **2026-06-25** | **Frozen** |
+| First integration: MJU Asset | 2026-06-25 | Cleared |
 
 ---
 
-## 10. Next Recommended Action
+## 10. Next Steps
 
-1. Use the Production ADMIN token locally — confirm it authenticates against `https://pmo.jaideedigital.com/api`
-2. `GET /api/v1/projects` to retrieve `MJU_ID` and `PMOIS_ID`
-3. `POST /api/v1/auth/tokens` with `project_id: MJU_ID` to create the MJU Asset project-scoped token; save the raw token from the response
-4. Run the one-block verification script (Section 7, Step C) — all 12 scenarios
-5. Fill in `docs/reports/project-scoped-token-enforcement-verification.md` with actual HTTP results
-6. Submit Verification Report for CTO sign-off
-7. After CTO approval — freeze PMOIS API v1.0
+PMOIS API v1.0 is frozen. Future work should follow ADR-0001:
+
+- Additive changes (new optional fields, new routes) are permitted within v1.
+- Breaking changes require a `v2` version bump.
+- New project integrations: create a project-scoped token via `POST /api/v1/auth/tokens` with `project_id`.
+- Known hardening items for a future phase: cross-workspace FK validation at token creation.
 
 ---
 
@@ -239,8 +239,9 @@ No code or architecture blockers.
 
 | Document | Path |
 |----------|------|
+| **API v1.0 Freeze ADR** | `docs/adr/ADR-0001-pmois-api-v1.0-freeze.md` |
+| Verification report (approved) | `docs/reports/project-scoped-token-enforcement-verification.md` |
 | Security design | `docs/security/project-scoped-token-enforcement.md` |
-| Verification report (to fill in) | `docs/reports/project-scoped-token-enforcement-verification.md` |
 | Deployment & verification runbook | `docs/reports/dep-phase4-project-scoped-token-runbook.md` |
 | Governance Framework v1.4 | `docs/governance/governance-framework-v1.4.md` |
 | Document templates | `docs/templates/` |
@@ -250,4 +251,4 @@ No code or architecture blockers.
 
 ---
 
-*Handover prepared 2026-06-25. Resume from Section 10 (7-step next action) in new conversation.*
+*Handover last updated 2026-06-25. PMOIS API v1.0 frozen. See ADR-0001 for freeze decision record.*

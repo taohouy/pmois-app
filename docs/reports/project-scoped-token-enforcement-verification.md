@@ -3,11 +3,11 @@
 **Document type:** Verification Report  
 **Document code:** VER-project-scoped-token-enforcement  
 **Version:** 1  
-**Status:** Complete  
-**Review status:** Pending CTO Sign-Off  
-**Reviewed by:** —  
-**Approval status:** Pending  
-**Approved by:** —  
+**Status:** Approved  
+**Review status:** Reviewed  
+**Reviewed by:** CTO  
+**Approval status:** Approved  
+**Approved by:** CTO  
 **Date:** 2026-06-25  
 **Last updated:** 2026-06-25  
 **Author:** Claude Code (on behalf of CTO)  
