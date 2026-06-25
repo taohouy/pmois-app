@@ -3,9 +3,10 @@
 
 **Document type:** Deployment Runbook  
 **Document code:** DEP-phase4-project-scoped-token-runbook  
-**Version:** 1  
+**Version:** 2  
 **Status:** Active  
 **Date:** 2026-06-25  
+**Last updated:** 2026-06-25  
 **Author:** Claude Code (on behalf of CTO)  
 **Project:** PMOIS  
 **Phase:** 4 — First Real Project Integration  
@@ -50,16 +51,27 @@
 
 **Low.** Migration 0031 adds a nullable column with `DEFAULT NULL` — all existing tokens are unaffected. Migration 0032 is `INSERT IGNORE` — idempotent and safe to re-run. Both have rollback files.
 
+### Deployment method
+
+**PMOIS Production Standard: Method B — FTP/File Upload**
+
+The PMOIS production server does not perform `git pull` from GitLab. All file updates are uploaded manually via FTP or the existing deployment workflow.
+
+| Method | Description | PMOIS Standard |
+|--------|-------------|----------------|
+| **Method A** | Git-based (`git pull` on server) | Optional — only if server has Git access |
+| **Method B** | FTP / file upload | **Current PMOIS production standard** |
+
 ### Estimated time
 
 | Phase | Estimated time |
 |-------|---------------|
-| Commit + push | 2 minutes |
-| Server deploy (git pull) | 2 minutes |
+| Commit + push to GitLab | 2 minutes |
+| FTP upload to production server | 5–10 minutes |
 | Migrations | < 1 minute |
 | Health check | 2 minutes |
 | Full verification (9 scenarios) | 10–15 minutes |
-| **Total** | **~20 minutes** |
+| **Total** | **~20–30 minutes** |
 
 ---
 
@@ -69,132 +81,111 @@ Complete before starting any deployment step.
 
 | # | Check | Done |
 |---|-------|------|
-| 1 | Working directory is clean except for Phase 4 changes (`git status`) | ☐ |
-| 2 | All Phase 4 source files are present and correct (see Section 3) | ☐ |
-| 3 | Rollback files exist: `0031_alter_api_tokens_add_project_id.rollback.sql` | ☐ |
-| 4 | ADMIN token for `https://pmo.jaideedigital.com/api` is available | ☐ |
-| 5 | SSH access to production server is confirmed | ☐ |
-| 6 | MySQL credentials for production database are available | ☐ |
+| 1 | Phase 4 commit `949a958` is pushed to GitLab (`git log --oneline -1`) | ☐ |
+| 2 | Phase 4 file list confirmed (see Section 3 — Files to Upload) | ☐ |
+| 3 | Rollback file exists locally: `0031_alter_api_tokens_add_project_id.rollback.sql` | ☐ |
+| 4 | FTP credentials / deployment access to production server confirmed | ☐ |
+| 5 | MySQL credentials for production database are available | ☐ |
+| 6 | ADMIN token for `https://pmo.jaideedigital.com/api` is available | ☐ |
 | 7 | A recent database backup exists | ☐ |
 
 ---
 
-## 3. Step 1 — Commit and Push Phase 4 Code
+## 3. Step 1 — Confirm Phase 4 Code on GitLab
 
-Run from `D:\Projects\pmois-app` on the local machine.
+> **Status: Complete.** Phase 4 was committed and pushed to GitLab on 2026-06-25 as commit `949a958`. This step is a confirmation check only.
 
-### 3.1 Confirm Phase 4 files are present
-
-```powershell
-git status --short
-```
-
-Expected output (these files should appear):
-
-```
- M src/Application/Http/Controllers/ApiTokenController.php
- M src/Application/Middleware/AuthTokenMiddleware.php
- M src/Config/routes.php
- M src/Domain/Auth/ApiTokenRepositoryInterface.php
- M src/Infrastructure/Persistence/MySQL/MySqlApiTokenRepository.php
-?? database/migrations/0031_alter_api_tokens_add_project_id.rollback.sql
-?? database/migrations/0031_alter_api_tokens_add_project_id.sql
-?? database/migrations/0032_seed_mju_asset_project.sql
-?? docs/
-?? src/Application/Middleware/ProjectScopeMiddleware.php
-```
-
-### 3.2 Stage Phase 4 files
-
-```powershell
-git add src/Application/Http/Controllers/ApiTokenController.php
-git add src/Application/Middleware/AuthTokenMiddleware.php
-git add src/Application/Middleware/ProjectScopeMiddleware.php
-git add src/Config/routes.php
-git add src/Domain/Auth/ApiTokenRepositoryInterface.php
-git add src/Infrastructure/Persistence/MySQL/MySqlApiTokenRepository.php
-git add database/migrations/0031_alter_api_tokens_add_project_id.sql
-git add database/migrations/0031_alter_api_tokens_add_project_id.rollback.sql
-git add database/migrations/0032_seed_mju_asset_project.sql
-git add docs/
-```
-
-### 3.3 Commit
-
-```powershell
-git commit -m "Phase 4: project-scoped token enforcement
-
-- Add ProjectScopeMiddleware (enforces project isolation)
-- Extend AuthTokenMiddleware to expose token_project_id
-- Add project_id to ApiTokenRepository create() and listByWorkspace()
-- Add ApiTokenController support for project_id in request body
-- Migration 0031: ALTER TABLE api_tokens ADD COLUMN project_id
-- Migration 0032: Seed MJU Asset project (code = MJU-ASSET)
-- Add security design and verification report docs"
-```
-
-### 3.4 Push
-
-```powershell
-git push origin master
-```
-
-Confirm push succeeded:
+### 3.1 Verify commit on local machine
 
 ```powershell
 git log --oneline -3
 ```
 
+Expected: `949a958` appears as the latest commit.
+
+### 3.2 Files to upload to production server
+
+The following files must be uploaded in Step 2. All paths are relative to the project root (`D:\Projects\pmois-app\`).
+
+**New files:**
+
+| Local path | Upload to (server path relative to app root) |
+|------------|----------------------------------------------|
+| `src/Application/Middleware/ProjectScopeMiddleware.php` | `src/Application/Middleware/ProjectScopeMiddleware.php` |
+| `database/migrations/0031_alter_api_tokens_add_project_id.sql` | `database/migrations/0031_alter_api_tokens_add_project_id.sql` |
+| `database/migrations/0031_alter_api_tokens_add_project_id.rollback.sql` | `database/migrations/0031_alter_api_tokens_add_project_id.rollback.sql` |
+| `database/migrations/0032_seed_mju_asset_project.sql` | `database/migrations/0032_seed_mju_asset_project.sql` |
+
+**Modified files:**
+
+| Local path | Upload to (server path relative to app root) |
+|------------|----------------------------------------------|
+| `src/Application/Http/Controllers/ApiTokenController.php` | `src/Application/Http/Controllers/ApiTokenController.php` |
+| `src/Application/Middleware/AuthTokenMiddleware.php` | `src/Application/Middleware/AuthTokenMiddleware.php` |
+| `src/Config/routes.php` | `src/Config/routes.php` |
+| `src/Domain/Auth/ApiTokenRepositoryInterface.php` | `src/Domain/Auth/ApiTokenRepositoryInterface.php` |
+| `src/Infrastructure/Persistence/MySQL/MySqlApiTokenRepository.php` | `src/Infrastructure/Persistence/MySQL/MySqlApiTokenRepository.php` |
+
+> The `docs/` directory does not need to be uploaded to the production server — documentation lives in the repository only.
+
 ---
 
-## 4. Step 2 — Deploy to Production Server
+## 4. Step 2 — Upload Files to Production Server (Method B: FTP)
 
-SSH to the production server and pull the latest code.
+> **PMOIS Production Standard:** upload files via FTP or the existing deployment workflow. The production server does not perform `git pull`.
 
-### 4.1 SSH to server
+### 4.1 Upload all files in the upload list
 
-```bash
-ssh {SERVER_USER}@{SERVER_HOST}
-```
+Using your FTP client (FileZilla, WinSCP, or equivalent), connect to the production server and upload each file from Section 3.2, preserving the directory structure relative to the application root.
 
-> Replace `{SERVER_USER}` and `{SERVER_HOST}` with actual production server credentials.
+Upload order recommendation: upload PHP source files first, then migration SQL files last (migrations are executed separately in Step 3).
 
-### 4.2 Navigate to application directory
+### 4.2 Verify uploaded files
 
-```bash
-cd {APP_PATH}
-```
-
-> Replace `{APP_PATH}` with the actual path where PMOIS is deployed (e.g., `/var/www/pmois-app`).
-
-### 4.3 Pull Phase 4 code
+After upload, confirm the critical new file is in place. If you have SSH access, run:
 
 ```bash
-git pull origin master
+ls -la {APP_PATH}/src/Application/Middleware/ProjectScopeMiddleware.php
 ```
 
-Expected: the 9 changed/new files listed in Section 3.1 appear in the output.
+If SSH is not available, verify via the FTP client that the file exists with the correct size and a recent modification timestamp.
 
-### 4.4 Confirm new files are present
+### 4.3 Reload PHP-FPM / clear OPcache (if applicable)
 
-```bash
-ls -la src/Application/Middleware/ProjectScopeMiddleware.php
-ls -la database/migrations/0031_alter_api_tokens_add_project_id.sql
-ls -la database/migrations/0032_seed_mju_asset_project.sql
-```
+If the server uses PHP-FPM with OPcache, PHP may serve cached versions of modified files until the cache is cleared.
 
-All three should exist. If any are missing, do not continue — re-check the git push in Step 1.
-
-### 4.5 Reload PHP-FPM (if applicable)
-
-If the server uses PHP-FPM with OPcache:
+**Option A — if SSH access is available:**
 
 ```bash
 sudo systemctl reload php{VERSION}-fpm
 # Example: sudo systemctl reload php8.1-fpm
 ```
 
-If using a different process manager, apply the equivalent reload command.
+**Option B — if only FTP access is available:**
+
+Upload a temporary `opcache_reset.php` file to `public/`:
+
+```php
+<?php opcache_reset(); echo 'OPcache cleared'; unlink(__FILE__);
+```
+
+Then visit `https://pmo.jaideedigital.com/opcache_reset.php` once in a browser. The file deletes itself after execution.
+
+**Option C — if OPcache is not enabled:**
+
+No action required.
+
+### Method A (Git-based) — Alternative if server has Git access
+
+> Use this method only if the production server is confirmed to have Git and GitLab access.
+
+```bash
+ssh {SERVER_USER}@{SERVER_HOST}
+cd {APP_PATH}
+git pull origin master
+```
+
+Expected: commit `949a958` pulled, 21 files changed.
 
 ---
 
@@ -641,11 +632,12 @@ Complete after running all curl scripts. Tick each item when confirmed.
 
 | # | Check | Done |
 |---|-------|------|
-| 1 | `git pull` completed on production server with no errors | ☐ |
-| 2 | `ProjectScopeMiddleware.php` exists on production server | ☐ |
-| 3 | Migration 0031 applied — `project_id` column visible in `DESCRIBE api_tokens` | ☐ |
-| 4 | Migration 0032 applied — `MJU-ASSET` project exists in `projects` table | ☐ |
-| 5 | `GET /api/v1/health` returns `{"status":"ok"}` | ☐ |
+| 1 | All 9 files from Section 3.2 uploaded to production server via FTP | ☐ |
+| 2 | `ProjectScopeMiddleware.php` confirmed present on production server | ☐ |
+| 3 | OPcache cleared (if applicable) | ☐ |
+| 4 | Migration 0031 applied — `project_id` column visible in `DESCRIBE api_tokens` | ☐ |
+| 5 | Migration 0032 applied — `MJU-ASSET` project exists in `projects` table | ☐ |
+| 6 | `GET /api/v1/health` returns `{"status":"ok"}` | ☐ |
 
 ### Token creation
 
