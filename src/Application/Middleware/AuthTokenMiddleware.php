@@ -53,7 +53,7 @@ final class AuthTokenMiddleware implements MiddlewareInterface
         $tokenHash = hash('sha256', $rawToken);
 
         $stmt = $this->db->prepare(
-            'SELECT id, workspace_id, created_by_user_id, ai_consumer_id, status, expires_at
+            'SELECT id, workspace_id, project_id, created_by_user_id, ai_consumer_id, status, expires_at
              FROM api_tokens WHERE token_hash = :hash LIMIT 1'
         );
         $stmt->execute(['hash' => $tokenHash]);
@@ -87,9 +87,10 @@ final class AuthTokenMiddleware implements MiddlewareInterface
             ->withAttribute('api_token_id', (int) $row['id'])
             ->withAttribute('workspace_id', $workspaceId)
             ->withAttribute('user_id', (int) $row['created_by_user_id'])
-            // 🆕 Phase 3: แนบ ai_consumer_id ด้วย (NULL = human token ปกติ)
-            // ใช้โดย AiAccessControlMiddleware เพื่อบังคับ deny-by-default ของ AI token
+            // Phase 3: แนบ ai_consumer_id ด้วย (NULL = human token ปกติ)
             ->withAttribute('ai_consumer_id', $row['ai_consumer_id'] !== null ? (int) $row['ai_consumer_id'] : null)
+            // Phase 4: project-scoped token (NULL = workspace-level / ADMIN token)
+            ->withAttribute('token_project_id', $row['project_id'] !== null ? (int) $row['project_id'] : null)
             ->withAttribute('audit_context', new AuditContext());
 
         return $handler->handle($request);

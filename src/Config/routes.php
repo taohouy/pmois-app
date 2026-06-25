@@ -22,6 +22,7 @@ use App\Application\Http\Controllers\WorkspaceModuleSettingController;
 use App\Application\Middleware\AiAccessControlMiddleware;
 use App\Application\Middleware\AuditLoggingMiddleware;
 use App\Application\Middleware\AuthTokenMiddleware;
+use App\Application\Middleware\ProjectScopeMiddleware;
 use App\Application\Middleware\RequiresPermissionMiddleware;
 use App\Application\Middleware\WorkspaceContextMiddleware;
 use App\Domain\Identity\PermissionResolver;
@@ -205,5 +206,7 @@ return function (App $app, ContainerInterface $container): void {
         // ก่อนถึง WorkspaceContext/Controller เลย -- ใช้ lazy resolve ผ่านชื่อคลาส (เรียนรู้
         // จาก bug เดิมเรื่อง eager resolution ของ AuditLoggingMiddleware ตอน Phase 0)
         ->add(AiAccessControlMiddleware::class)
+        // Phase 4: enforce project isolation for project-scoped tokens (runs 2nd, after AuthToken)
+        ->add(ProjectScopeMiddleware::class)
         ->add(new AuthTokenMiddleware($container->get(PDO::class), $container));
 };

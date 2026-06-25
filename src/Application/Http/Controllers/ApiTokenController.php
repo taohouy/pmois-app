@@ -38,7 +38,8 @@ final class ApiTokenController
             createdByUserId: $userId,
             tokenName: (string) $body['token_name'],
             scopes: null,
-            aiConsumerId: isset($body['ai_consumer_id']) ? (int) $body['ai_consumer_id'] : null
+            aiConsumerId: isset($body['ai_consumer_id']) ? (int) $body['ai_consumer_id'] : null,
+            projectId: isset($body['project_id']) ? (int) $body['project_id'] : null
         );
 
         $auditContext = $request->getAttribute('audit_context');
@@ -51,6 +52,7 @@ final class ApiTokenController
         return ApiResponse::success($response, [
             'id' => $result['id'],
             'token_name' => $body['token_name'],
+            'project_id' => isset($body['project_id']) ? (int) $body['project_id'] : null,
             'raw_token' => $result['raw_token'],
             'warning' => 'เก็บ raw_token นี้ไว้ตอนนี้เท่านั้น จะไม่แสดงซ้ำอีก',
         ], [], 201);

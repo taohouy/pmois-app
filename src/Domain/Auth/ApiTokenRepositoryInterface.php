@@ -12,7 +12,7 @@ interface ApiTokenRepositoryInterface
      *
      * @return array{id: int, raw_token: string}
      */
-    public function create(int $workspaceId, int $createdByUserId, string $tokenName, ?array $scopes, ?int $aiConsumerId = null): array;
+    public function create(int $workspaceId, int $createdByUserId, string $tokenName, ?array $scopes, ?int $aiConsumerId = null, ?int $projectId = null): array;
 
     public function findByHash(string $tokenHash): ?array;
 

@@ -12,17 +12,18 @@ use App\Domain\Auth\ApiTokenRepositoryInterface;
  */
 final class MySqlApiTokenRepository extends BaseRepository implements ApiTokenRepositoryInterface
 {
-    public function create(int $workspaceId, int $createdByUserId, string $tokenName, ?array $scopes, ?int $aiConsumerId = null): array
+    public function create(int $workspaceId, int $createdByUserId, string $tokenName, ?array $scopes, ?int $aiConsumerId = null, ?int $projectId = null): array
     {
         $rawToken = bin2hex(random_bytes(32)); // 64 hex chars
         $tokenHash = hash('sha256', $rawToken);
 
         $stmt = $this->db->prepare(
-            'INSERT INTO api_tokens (workspace_id, created_by_user_id, ai_consumer_id, token_name, token_hash, scopes, status)
-             VALUES (:workspace_id, :created_by_user_id, :ai_consumer_id, :token_name, :token_hash, :scopes, :status)'
+            'INSERT INTO api_tokens (workspace_id, project_id, created_by_user_id, ai_consumer_id, token_name, token_hash, scopes, status)
+             VALUES (:workspace_id, :project_id, :created_by_user_id, :ai_consumer_id, :token_name, :token_hash, :scopes, :status)'
         );
         $stmt->execute([
             'workspace_id' => $workspaceId,
+            'project_id' => $projectId,
             'created_by_user_id' => $createdByUserId,
             'ai_consumer_id' => $aiConsumerId,
             'token_name' => $tokenName,
@@ -64,7 +65,7 @@ final class MySqlApiTokenRepository extends BaseRepository implements ApiTokenRe
     public function listByWorkspace(int $workspaceId): array
     {
         $sql = $this->applyWorkspaceScope(
-            'SELECT id, token_name, status, expires_at, last_used_at, created_at
+            'SELECT id, project_id, token_name, status, expires_at, last_used_at, created_at
              FROM api_tokens WHERE {{WORKSPACE_FILTER}} ORDER BY created_at DESC'
         );
         $stmt = $this->db->prepare($sql);
