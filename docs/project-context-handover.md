@@ -5,7 +5,7 @@
 **Reason:** Conversation context near capacity — handover for new session  
 **GitLab repository:** `https://gitlab.com/jaideedigital/pmois-app.git`  
 **Production URL:** `https://pmo.jaideedigital.com/api`  
-**Latest commit:** `29ad68a` on `master`
+**Latest commit:** `af84b92` on `master`
 
 ---
 
@@ -19,9 +19,9 @@
 | Production deployment (FTP upload) | Complete |
 | Database migrations 0031 + 0032 | Applied via phpMyAdmin |
 | Production health check | PASS — `/api/v1/health` = `{"status":"ok"}` |
-| Production ADMIN token | **Blocked** — previous token lost; new token not yet generated |
-| MJU Asset project-scoped token | Not yet created (requires ADMIN token) |
-| Verification (9 scenarios) | **Pending** — blocked on ADMIN token |
+| Production ADMIN token | **Ready** — new token generated successfully |
+| MJU Asset project-scoped token | Not yet created — next step |
+| Verification (9 scenarios) | **Pending** — ready to execute |
 | Verification Report | Draft — results table empty, awaiting execution |
 
 ---
@@ -128,59 +128,7 @@ New optional field: `project_id` (integer). Omitting it creates a workspace-leve
 
 ## 7. Remaining Verification Tasks
 
-### Immediate blocker: generate new ADMIN token
-
-The previous ADMIN token was lost. Three methods to generate a new one (no management UI exists — bootstrap must go directly to DB):
-
-**Method 2 — phpMyAdmin SQL (Recommended for PMOIS production):**
-
-Run these 3 statements in order in phpMyAdmin:
-
-```sql
--- Statement 1: Revoke old token
-UPDATE api_tokens
-SET status = 'revoked'
-WHERE workspace_id = (SELECT id FROM workspaces WHERE code = 'JAIDEEDIGITAL')
-  AND token_name = 'PMOIS Pilot Admin Token'
-  AND status = 'active';
-```
-
-```sql
--- Statement 2: Generate new token
-SET @raw = LOWER(HEX(RANDOM_BYTES(32)));
-
-INSERT INTO api_tokens
-    (workspace_id, created_by_user_id, token_name, token_hash, scopes, status)
-SELECT
-    w.id,
-    u.id,
-    'PMOIS Production Admin Token',
-    SHA2(@raw, 256),
-    NULL,
-    'active'
-FROM workspaces w
-JOIN users u ON u.email = 'admin@jaidee.digital'
-WHERE w.code = 'JAIDEEDIGITAL'
-LIMIT 1;
-```
-
-```sql
--- Statement 3: Display raw token — SAVE THIS IMMEDIATELY
-SELECT @raw AS raw_token, LAST_INSERT_ID() AS token_id;
-```
-
-**Method 1 — PHP CLI (if SSH available):**
-```bash
-cd {APP_PATH}
-php database/provision_pilot_token.php
-```
-(Revoke old token first via SQL above.)
-
-**Method 3 — Bootstrap PHP file via FTP:** Upload `bootstrap_admin_token.php` to `public/`, open in browser once, file self-deletes. (Full code available in prior conversation or can be regenerated.)
-
----
-
-### After ADMIN token is obtained — verification steps
+### Verification steps
 
 **Step A: Get project IDs**
 
@@ -255,11 +203,9 @@ echo "======================================"
 
 ## 8. Current Blockers
 
-| Blocker | Resolution |
-|---------|-----------|
-| Production ADMIN token lost | Generate via phpMyAdmin SQL (Method 2 in Section 7) |
+None. Implementation is complete, deployed, and ADMIN token is ready.
 
-No code or architecture blockers — implementation is complete and deployed.
+No code or architecture blockers.
 
 ---
 
@@ -267,20 +213,25 @@ No code or architecture blockers — implementation is complete and deployed.
 
 | Step | Who | Action |
 |------|-----|--------|
-| 1 | CTO/Admin | Run 3 SQL statements in phpMyAdmin to generate new ADMIN token |
-| 2 | Engineer | Set shell variables (`BASE_URL`, `ADMIN_TOKEN`, `MJU_ID`, `PMOIS_ID`, `MJU_TOKEN`) |
-| 3 | Engineer | Create MJU Asset project-scoped token via curl (Step B above) |
-| 4 | Engineer | Run one-block verification script (Step C above) |
+| 1 | Engineer | Use Production ADMIN token locally — confirm it authenticates |
+| 2 | Engineer | `GET /api/v1/projects` — retrieve `MJU_ID` and `PMOIS_ID` |
+| 3 | Engineer | `POST /api/v1/auth/tokens` with `project_id: MJU_ID` — create MJU Asset project-scoped token; save raw token |
+| 4 | Engineer | Run one-block verification script (Step C in Section 7) |
 | 5 | Engineer | Fill in Verification Report with actual results |
-| 6 | CTO | Sign off Verification Report → PMOIS API v1.0 freeze |
+| 6 | Engineer | Submit Verification Report for CTO sign-off |
+| 7 | CTO | Sign off → freeze PMOIS API v1.0 |
 
 ---
 
 ## 10. Next Recommended Action
 
-**Immediate:** Generate new Production ADMIN token via phpMyAdmin (3 SQL statements in Section 7).
-
-**Then in new conversation:** Paste the ADMIN token and project IDs — Claude will run curl verification, capture results, update `docs/reports/project-scoped-token-enforcement-verification.md`, and prepare the report for CTO sign-off to freeze PMOIS API v1.0.
+1. Use the Production ADMIN token locally — confirm it authenticates against `https://pmo.jaideedigital.com/api`
+2. `GET /api/v1/projects` to retrieve `MJU_ID` and `PMOIS_ID`
+3. `POST /api/v1/auth/tokens` with `project_id: MJU_ID` to create the MJU Asset project-scoped token; save the raw token from the response
+4. Run the one-block verification script (Section 7, Step C) — all 12 scenarios
+5. Fill in `docs/reports/project-scoped-token-enforcement-verification.md` with actual HTTP results
+6. Submit Verification Report for CTO sign-off
+7. After CTO approval — freeze PMOIS API v1.0
 
 ---
 
@@ -299,4 +250,4 @@ No code or architecture blockers — implementation is complete and deployed.
 
 ---
 
-*Handover prepared 2026-06-25. Resume from Section 7 (generate ADMIN token) in new conversation.*
+*Handover prepared 2026-06-25. Resume from Section 10 (7-step next action) in new conversation.*
