@@ -19,6 +19,43 @@ declare(strict_types=1);
  *   php database/migrate.php status
  */
 
+// PHP 7.4 compatibility polyfills
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool
+    {
+        return $needle !== '' && strncmp($haystack, $needle, strlen($needle)) === 0;
+    }
+}
+if (!function_exists('str_ends_with')) {
+    function str_ends_with(string $haystack, string $needle): bool
+    {
+        return $needle !== '' && substr($haystack, -strlen($needle)) === $needle;
+    }
+}
+if (!function_exists('str_contains')) {
+    function str_contains(string $haystack, string $needle): bool
+    {
+        return $needle !== '' && strpos($haystack, $needle) !== false;
+    }
+}
+
+/**
+ * PMOIS Custom Migration Runner
+ *
+ * แก้ไขจากเวอร์ชันก่อน: เลิกห่อ exec($sql) ด้วย beginTransaction()/commit()
+ *
+ * เหตุผล (พบจากการทดสอบจริงบน server):
+ * MySQL ทำ "implicit commit" ทุกครั้งที่เจอ DDL statement (CREATE TABLE, ALTER TABLE ฯลฯ)
+ * แม้เราเปิด transaction ไว้ก่อนหน้าก็ตาม -- พอ CREATE TABLE รันเสร็จ MySQL ปิด transaction
+ * ไปเองเงียบๆ แล้วพอโค้ดเดิมเรียก commit() ต่อจะเจอ error "There is no active transaction"
+ * เพราะ DDL ไม่สามารถ rollback ได้จริงอยู่แล้วใน MySQL การห่อ transaction จึงไม่มีประโยชน์
+ * และกลับทำให้ error -- จึงตัดออกทั้งหมด
+ *
+ * Usage:
+ *   php database/migrate.php run
+ *   php database/migrate.php status
+ */
+
 $rootDir = dirname(__DIR__);
 $envFile = $rootDir . '/.env';
 

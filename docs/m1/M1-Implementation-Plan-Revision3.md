@@ -170,7 +170,7 @@ ALTER TABLE projects
 
 -- Step 1: Insert new M0 permission grants per matrix
 INSERT INTO role_permissions (role_id, permission_code)
-SELECT r.id, pc.code
+SELECT r.id, pc.perm_code
 FROM (
   -- Permission code -> allowed role codes mapping
   SELECT 'project.structure.update' AS perm_code, 'ADMIN' AS role_code UNION ALL
