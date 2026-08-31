@@ -13,9 +13,15 @@ interface UserRepositoryInterface
 
     public function findByEmail(string $email): ?User;
 
+    public function findByLineUserId(string $lineUserId): ?User;
+
     public function isPlatformAdmin(int $userId): bool;
 
     public function create(string $name, string $email, string $passwordHash): User;
+
+    public function createWithLine(string $name, string $email, string $lineUserId, string $authProvider): User;
+
+    public function updateLineInfo(int $id, string $lineUserId, string $lineDisplayName, string $avatarUrl, string $authProvider): bool;
 
     public function updateStatus(int $id, string $status): bool;
 

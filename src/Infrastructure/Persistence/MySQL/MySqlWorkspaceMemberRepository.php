@@ -48,6 +48,23 @@ final class MySqlWorkspaceMemberRepository extends BaseRepository implements Wor
         ]);
     }
 
+    public function create(int $workspaceId, int $userId, int $roleId, string $status = 'active'): void
+    {
+        $stmt = $this->db->prepare(
+            'INSERT INTO workspace_members (workspace_id, user_id, role_id, status)
+             VALUES (:workspace_id, :user_id, :role_id, :status)
+             ON DUPLICATE KEY UPDATE role_id = :role_id_update, status = :status_update'
+        );
+        $stmt->execute([
+            'workspace_id' => $workspaceId,
+            'user_id' => $userId,
+            'role_id' => $roleId,
+            'status' => $status,
+            'role_id_update' => $roleId,
+            'status_update' => $status,
+        ]);
+    }
+
     public function updateRole(int $workspaceId, int $userId, int $roleId): bool
     {
         $stmt = $this->db->prepare(
@@ -68,6 +85,15 @@ final class MySqlWorkspaceMemberRepository extends BaseRepository implements Wor
              WHERE workspace_id = :workspace_id AND user_id = :user_id"
         );
         return $stmt->execute(['workspace_id' => $workspaceId, 'user_id' => $userId]);
+    }
+
+    public function updateStatus(int $workspaceId, int $userId, string $status): bool
+    {
+        $stmt = $this->db->prepare(
+            'UPDATE workspace_members SET status = :status
+             WHERE workspace_id = :workspace_id AND user_id = :user_id'
+        );
+        return $stmt->execute(['status' => $status, 'workspace_id' => $workspaceId, 'user_id' => $userId]);
     }
 
     public function listMembers(int $workspaceId): array

@@ -36,6 +36,15 @@ final class MySqlUserRepository implements UserRepositoryInterface
         return $row !== false ? User::fromRow($row) : null;
     }
 
+    public function findByLineUserId(string $lineUserId): ?User
+    {
+        $stmt = $this->db->prepare('SELECT * FROM users WHERE line_user_id = :line_user_id LIMIT 1');
+        $stmt->execute(['line_user_id' => $lineUserId]);
+        $row = $stmt->fetch();
+
+        return $row !== false ? User::fromRow($row) : null;
+    }
+
     public function isPlatformAdmin(int $userId): bool
     {
         $stmt = $this->db->prepare('SELECT is_platform_admin FROM users WHERE id = :id LIMIT 1');
@@ -58,7 +67,7 @@ final class MySqlUserRepository implements UserRepositoryInterface
             'status' => 'active',
             // ✅ แก้: cast bool -> int ก่อน bind เพราะ PDO แปลง PHP false เป็น string ว่าง ""
             // ไม่ใช่ 0 ทำให้ MySQL strict mode reject ("Incorrect integer value: ''")
-            'is_platform_admin' => 0, // ต้องไปตั้งแยกผ่านช่องทาง admin เท่านั้น ไม่ตั้งตอนสมัครสมาชิกปกติ
+            'is_platform_admin' => 0, // ต้องไปตั้งแยกผ่านช่องทาง admin เท่านั้น ไม่ใช่ตอนสมัครสมาชิกปกติ
         ]);
 
         $newId = (int) $this->db->lastInsertId();
@@ -69,6 +78,54 @@ final class MySqlUserRepository implements UserRepositoryInterface
         }
 
         return $user;
+    }
+
+    public function createWithLine(string $name, string $email, string $lineUserId, string $authProvider): User
+    {
+        $stmt = $this->db->prepare(
+            'INSERT INTO users (name, email, line_user_id, auth_provider, status, is_platform_admin)
+             VALUES (:name, :email, :line_user_id, :auth_provider, :status, :is_platform_admin)'
+        );
+        $stmt->execute([
+            'name' => $name,
+            'email' => $email,
+            'line_user_id' => $lineUserId,
+            'auth_provider' => $authProvider,
+            'status' => 'active',
+            'is_platform_admin' => 0,
+        ]);
+
+        $newId = (int) $this->db->lastInsertId();
+        $user = $this->findById($newId);
+
+        if ($user === null) {
+            throw new RuntimeException('สร้าง user สำเร็จแต่ดึงข้อมูลกลับไม่ได้');
+        }
+
+        return $user;
+    }
+
+    public function findByLineUserId(string $lineUserId): ?User
+    {
+        $stmt = $this->db->prepare('SELECT * FROM users WHERE line_user_id = :line_user_id LIMIT 1');
+        $stmt->execute(['line_user_id' => $lineUserId]);
+        $row = $stmt->fetch();
+
+        return $row !== false ? User::fromRow($row) : null;
+    }
+
+    public function updateLineInfo(int $id, string $lineUserId, string $lineDisplayName, string $avatarUrl, string $authProvider): bool
+    {
+        $stmt = $this->db->prepare(
+            'UPDATE users SET line_user_id = :line_user_id, line_display_name = :line_display_name, avatar_url = :avatar_url, auth_provider = :auth_provider WHERE id = :id'
+        );
+        return $stmt->execute([
+            'line_user_id' => $lineUserId,
+            'line_display_name' => $lineDisplayName,
+            'avatar_url' => $avatarUrl,
+            'auth_provider' => $authProvider,
+            'id' => $id,
+        ]);
     }
 
     public function updateStatus(int $id, string $status): bool

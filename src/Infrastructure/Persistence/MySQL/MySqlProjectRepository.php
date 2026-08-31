@@ -50,22 +50,29 @@ final class MySqlProjectRepository extends BaseRepository implements ProjectRepo
         string $code,
         string $name,
         ?string $description,
-        int $ownerUserId
+        int $ownerUserId,
+        int $workspaceId,
+        ?int $parentProjectId = null,
+        string $developmentMode = 'manual',
+        ?string $abbreviation = null,
     ): Project {
         if ($this->workspaceId === null) {
             throw new RuntimeException('ต้องมี workspace context ก่อนสร้าง project');
         }
 
         $stmt = $this->db->prepare(
-            'INSERT INTO projects (workspace_id, code, name, description, status, owner_user_id)
-             VALUES (:workspace_id, :code, :name, :description, :status, :owner_user_id)'
+            'INSERT INTO projects (workspace_id, parent_project_id, code, abbreviation, name, description, status, development_mode, owner_user_id)
+             VALUES (:workspace_id, :parent_project_id, :code, :abbreviation, :name, :description, :status, :development_mode, :owner_user_id)'
         );
         $stmt->execute([
-            'workspace_id' => $this->workspaceId,
+            'workspace_id' => $workspaceId,
+            'parent_project_id' => $parentProjectId,
             'code' => $code,
+            'abbreviation' => $abbreviation,
             'name' => $name,
             'description' => $description,
             'status' => 'planning',
+            'development_mode' => $developmentMode,
             'owner_user_id' => $ownerUserId,
         ]);
 
@@ -77,6 +84,92 @@ final class MySqlProjectRepository extends BaseRepository implements ProjectRepo
         }
 
         return $project;
+    }
+
+    public function updateWorkspace(int $id, int $newWorkspaceId): bool
+    {
+        if ($this->findById($id) === null) {
+            return false;
+        }
+
+        $sql = $this->applyWorkspaceScope(
+            'UPDATE projects SET workspace_id = :new_workspace_id WHERE id = :id AND {{WORKSPACE_FILTER}}'
+        );
+        $stmt = $this->db->prepare($sql);
+
+        return $stmt->execute([
+            'new_workspace_id' => $newWorkspaceId,
+            'id' => $id,
+            'workspace_id' => $this->workspaceId,
+        ]);
+    }
+
+    public function updateParent(int $id, ?int $parentProjectId): bool
+    {
+        if ($this->findById($id) === null) {
+            return false;
+        }
+
+        // Prevent circular reference
+        if ($parentProjectId !== null) {
+            $current = $parentProjectId;
+            while ($current !== null) {
+                $parent = $this->findById($current);
+                if ($parent !== null && $parent->parentProjectId !== null) {
+                    $current = $parent->parentProjectId;
+                } else {
+                    $current = null;
+                }
+            }
+        }
+
+        $sql = $this->applyWorkspaceScope(
+            'UPDATE projects SET parent_project_id = :parent_project_id WHERE id = :id AND {{WORKSPACE_FILTER}}'
+        );
+        $stmt = $this->db->prepare($sql);
+
+        return $stmt->execute([
+            'parent_project_id' => $parentProjectId,
+            'id' => $id,
+            'workspace_id' => $this->workspaceId,
+        ]);
+    }
+
+    public function updateProgress(int $id, int $progressPercent, string $health): bool
+    {
+        if ($this->findById($id) === null) {
+            return false;
+        }
+
+        $sql = $this->applyWorkspaceScope(
+            'UPDATE projects SET progress_percent = :progress_percent, health = :health WHERE id = :id AND {{WORKSPACE_FILTER}}'
+        );
+        $stmt = $this->db->prepare($sql);
+
+        return $stmt->execute([
+            'progress_percent' => $progressPercent,
+            'health' => $health,
+            'id' => $id,
+            'workspace_id' => $this->workspaceId,
+        ]);
+    }
+
+    public function updateCurrentMilestone(int $id, ?int $milestoneId): bool
+    {
+        if ($this->findById($id) === null) {
+            return false;
+        }
+
+        $sql = $this->applyWorkspaceScope(
+            'UPDATE projects SET current_milestone_id = :milestone_id WHERE id = :id AND {{WORKSPACE_FILTER}}'
+        );
+        $stmt = $this->db->prepare($sql);
+
+        return $stmt->execute([
+            'milestone_id' => $milestoneId,
+            'id' => $id,
+            'workspace_id' => $this->workspaceId,
+        ]);
     }
 
     public function updateStatus(int $id, string $status): bool

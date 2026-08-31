@@ -8,6 +8,8 @@ use App\Domain\Ai\AiContextExportRepositoryInterface;
 use App\Domain\Ai\MarkdownFormatterService;
 use App\Domain\Audit\AuditTrailRepositoryInterface;
 use App\Domain\Auth\ApiTokenRepositoryInterface;
+use App\Domain\Auth\InvitationService;
+use App\Domain\Auth\LineLoginService;
 use App\Domain\Decision\DecisionRegisterRepositoryInterface;
 use App\Domain\Decision\DecisionRegisterService;
 use App\Domain\Governance\GovernanceAdoptionItemRepositoryInterface;
@@ -26,9 +28,31 @@ use App\Domain\Knowledge\AttachmentService;
 use App\Domain\Knowledge\KnowledgeArticleRepositoryInterface;
 use App\Domain\Knowledge\KnowledgeLinkRepositoryInterface;
 use App\Domain\Knowledge\KnowledgeLinkService;
+use App\Domain\Project\MilestoneRepositoryInterface;
 use App\Domain\Project\ProjectMemberRepositoryInterface;
+use App\Domain\Project\ProjectRepositoryInterface;
 use App\Domain\Project\ProjectStatusUpdateRepositoryInterface;
 use App\Domain\Project\ProjectRepositoryInterface;
+use App\Domain\Project\ProjectStructureHistoryRepositoryInterface;
+use App\Domain\Project\ProjectStructureService;
+use App\Domain\Project\MilestoneRepositoryInterface;
+use App\Domain\Project\MilestoneService;
+use App\Domain\Project\ProjectStructureHistoryRepositoryInterface;
+use App\Domain\Project\ProjectStructureService;
+use App\Application\Http\Controllers\ProjectStatusUpdateController;
+use App\Application\Http\Controllers\ProjectStructureController;
+use App\Application\Http\Controllers\ProjectStructureHistoryController;
+use App\Application\Http\Controllers\MilestoneController;
+use App\Application\Http\Controllers\RevisionController;
+use App\Application\Http\Controllers\RevisionReviewController;
+use App\Application\Http\Controllers\RepositoryController;
+use App\Application\Http\Controllers\AiAssignmentController;
+use App\Application\Http\Controllers\LineLoginController;
+use App\Application\Http\Controllers\InvitationController;
+use App\Application\Http\Controllers\ClaimController;
+use App\Application\Http\Controllers\GovernanceAdoptionController;
+use App\Application\Http\Controllers\GovernanceVersionController;
+use App\Application\Http\Controllers\GovernanceRecordController;
 use App\Application\Http\Controllers\ProjectStatusUpdateController;
 use App\Domain\Rfc\RfcCommentRepositoryInterface;
 use App\Domain\Rfc\RfcRepositoryInterface;
@@ -49,11 +73,15 @@ use App\Infrastructure\Persistence\MySQL\MySqlGovernanceVersionItemRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlGovernanceVersionRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlKnowledgeArticleRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlKnowledgeLinkRepository;
+use App\Infrastructure\Persistence\MySQL\MySqlMilestoneRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlProjectMemberRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlProjectStatusUpdateRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlProjectRepository;
+use App\Infrastructure\Persistence\MySQL\MySqlProjectStructureHistoryRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlRfcCommentRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlRfcRepository;
+use App\Infrastructure\Persistence\MySQL\MySqlRevisionRepository;
+use App\Infrastructure\Persistence\MySQL\MySqlRevisionReviewRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlRolePermissionRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlRoleRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlUserRepository;
@@ -154,5 +182,88 @@ return [
     ),
 
     MarkdownFormatterService::class => fn (ContainerInterface $c) => new MarkdownFormatterService(),
+
+    // ===== Phase 1: M1 Foundation Services =====
+    MilestoneRepositoryInterface::class => fn (ContainerInterface $c) => new MySqlMilestoneRepository($c->get(PDO::class), $c->get('current_workspace_id')),
+    ProjectStructureHistoryRepositoryInterface::class => fn (ContainerInterface $c) => new MySqlProjectStructureHistoryRepository($c->get(PDO::class), $c->get('current_workspace_id')),
+    ProjectRepositoryInterface::class => fn (ContainerInterface $c) => new MySqlProjectRepository($c->get(PDO::class), $c->get('current_workspace_id')),
+    ProjectMemberRepositoryInterface::class => fn (ContainerInterface $c) => new MySqlProjectMemberRepository($c->get(PDO::class), $c->get('current_workspace_id')),
+    WorkspaceMemberRepositoryInterface::class => fn (ContainerInterface $c) => new MySqlWorkspaceMemberRepository($c->get(PDO::class), $c->get('current_workspace_id')),
+    WorkspaceModuleSettingRepositoryInterface::class => fn (ContainerInterface $c) => new MySqlWorkspaceModuleSettingRepository($c->get(PDO::class), $c->get('current_workspace_id')),
+    ApiTokenRepositoryInterface::class => fn (ContainerInterface $c) => new MySqlApiTokenRepository($c->get(PDO::class), $c->get('current_workspace_id')),
+    AuditTrailRepositoryInterface::class => fn (ContainerInterface $c) => new MySqlAuditTrailRepository($c->get(PDO::class), $c->get('current_workspace_id')),
+    PermissionResolver::class => fn (ContainerInterface $c) => new PermissionResolver($c->get(PDO::class)),
+
+    // ===== Phase 1: M1 Services =====
+    MilestoneService::class => fn (ContainerInterface $c) => new \App\Domain\Project\MilestoneService(
+        $c->get(MilestoneRepositoryInterface::class),
+        $c->get('current_workspace_id')
+    ),
+    ProjectStructureService::class => fn (ContainerInterface $c) => new \App\Domain\Project\ProjectStructureService(
+        $c->get(ProjectRepositoryInterface::class),
+        $c->get(ProjectStructureHistoryRepositoryInterface::class)
+    ),
+    ProjectStructureHistoryRepositoryInterface::class => fn (ContainerInterface $c) => new MySqlProjectStructureHistoryRepository($c->get(PDO::class), $c->get('current_workspace_id')),
+    ProjectStructureController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\ProjectStructureController(
+        $c->get(\App\Domain\Project\ProjectStructureService::class)
+    ),
+    ProjectStructureHistoryController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\ProjectStructureHistoryController(
+        $c->get(\App\Domain\Project\ProjectStructureService::class)
+    ),
+    MilestoneController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\MilestoneController(
+        $c->get(\App\Domain\Project\MilestoneService::class)
+    ),
+    RevisionController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\RevisionController(
+        $c->get(\App\Domain\Project\RevisionService::class)
+    ),
+    RevisionReviewController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\RevisionReviewController(
+        $c->get(\App\Domain\Project\RevisionReviewService::class)
+    ),
+    RepositoryController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\RepositoryController(
+        $c->get(\App\Domain\Project\RepositoryService::class)
+    ),
+    AiAssignmentController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\AiAssignmentController(
+        $c->get(\App\Domain\Project\AiAssignmentService::class)
+    ),
+    LineLoginController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\LineLoginController(
+        $c->get(\App\Domain\Auth\LineLoginService::class)
+    ),
+    InvitationController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\InvitationController(
+        $c->get(\App\Domain\Auth\InvitationService::class)
+    ),
+    ClaimController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\ClaimController(
+        $c->get(\App\Domain\Auth\InvitationService::class)
+    ),
+    LineLoginController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\LineLoginController(
+        $c->get(\App\Domain\Auth\LineLoginService::class)
+    ),
+    InvitationService::class => fn (ContainerInterface $c) => new \App\Domain\Auth\InvitationService(
+        $c->get(\App\Domain\Project\ProjectRepositoryInterface::class),
+        $c->get(\App\Domain\Workspace\WorkspaceMemberRepositoryInterface::class),
+        $c->get(\App\Domain\Identity\UserRepositoryInterface::class),
+        $c->get(\App\Domain\Auth\LineLoginService::class)
+    ),
+    LineLoginService::class => fn (ContainerInterface $c) => new \App\Domain\Auth\LineLoginService(
+        $c->get(\GuzzleHttp\Client::class),
+        $c->get(\Psr\Http\Message\RequestFactoryInterface::class),
+        $GLOBALS['app_env']['LINE_CHANNEL_ID'] ?? '',
+        $GLOBALS['app_env']['LINE_CHANNEL_SECRET'] ?? '',
+        $GLOBALS['app_env']['LINE_REDIRECT_URI'] ?? ''
+    ),
+    InvitationService::class => fn (ContainerInterface $c) => new \App\Domain\Auth\InvitationService(
+        $c->get(\App\Domain\Project\ProjectRepositoryInterface::class),
+        $c->get(\App\Domain\Workspace\WorkspaceMemberRepositoryInterface::class),
+        $c->get(\App\Domain\Identity\UserRepositoryInterface::class),
+        $c->get(\App\Domain\Auth\LineLoginService::class)
+    ),
+    InvitationController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\InvitationController(
+        $c->get(\App\Domain\Auth\InvitationService::class)
+    ),
+    ClaimController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\ClaimController(
+        $c->get(\App\Domain\Auth\InvitationService::class)
+    ),
+    LineLoginController::class => fn (ContainerInterface $c) => new \App\Application\Http\Controllers\LineLoginController(
+        $c->get(\App\Domain\Auth\LineLoginService::class)
+    ),
 
 ];

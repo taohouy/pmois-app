@@ -14,9 +14,13 @@ interface WorkspaceMemberRepositoryInterface
 
     public function addMember(int $workspaceId, int $userId, int $roleId): void;
 
+    public function create(int $workspaceId, int $userId, int $roleId, string $status = 'active'): void;
+
     public function updateRole(int $workspaceId, int $userId, int $roleId): bool;
 
     public function removeMember(int $workspaceId, int $userId): bool;
+
+    public function updateStatus(int $workspaceId, int $userId, string $status): bool;
 
     /**
      * @return array<int, array{user_id: int, role_id: int, status: string}>
