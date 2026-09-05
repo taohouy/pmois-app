@@ -24,4 +24,11 @@ interface ApiTokenRepositoryInterface
      * @return array<int, array<string, mixed>>
      */
     public function listByWorkspace(int $workspaceId): array;
+
+    /**
+     * M5 — Project API Token Management: tokens ที่ผูกกับ project (active + revoked)
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function listByProject(int $workspaceId, int $projectId): array;
 }

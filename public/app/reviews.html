@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PMOIS v2 — Reviews</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="container">
+  <h1>CTO Review Queue</h1>
+  <p class="muted small">รวม revisions ที่รอ CTO review จากทุกโครงการใน workspace</p>
+  <div id="queue"></div>
+</div>
+
+<script src="app.js"></script>
+<script>
+topbar('reviews');
+
+(async () => {
+  await requireSession();
+  const projects = await api('/api/v1/projects');
+  const rows = [];
+
+  for (const p of projects) {
+    try {
+      const submitted = await api(`/api/v1/projects/${p.id}/revisions?status=submitted`);
+      for (const r of submitted) rows.push({ project: p, revision: r });
+    } catch (e) { /* project.view ไม่ผ่านบาง project — ข้าม */ }
+  }
+
+  document.getElementById('queue').innerHTML = rows.length
+    ? '<table><tr><th>Project</th><th>Revision</th><th>Summary</th><th>Test</th><th>Submitted</th><th>Decision</th></tr>' +
+      rows.map(({ project, revision }) => `<tr>
+        <td>${esc(project.code)}</td>
+        <td>#${revision.id}</td>
+        <td>${esc(revision.summary)}</td>
+        <td>${statusBadge(revision.test_result)}</td>
+        <td>${esc(revision.submitted_at)}</td>
+        <td>
+          <button class="btn primary" onclick="decide(${revision.id}, 'approved')">Approve</button>
+          <button class="btn danger" onclick="decide(${revision.id}, 'rejected')">Reject</button>
+        </td></tr>`).join('') + '</table>'
+    : '<span class="muted">ไม่มี revisions รอ review</span>';
+})();
+
+async function decide(revisionId, decision) {
+  const note = prompt(decision === 'approved' ? 'Review note (optional):' : 'Reject reason:');
+  if (decision === 'rejected' && note === null) return;
+  try {
+    await api(`/api/v1/revisions/${revisionId}/review`, { method: 'POST', body: JSON.stringify({ decision, review_note: note }) });
+    location.reload();
+  } catch (err) { alert(`${err.code}: ${err.message}`); }
+}
+</script>
+</body>
+</html>

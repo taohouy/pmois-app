@@ -1,0 +1,35 @@
+PMOIS v2 — M9 Production Hardening — Validation Evidence
+Run date: 2026-09-06 01:01:11
+Environment: PHP 8.1.0, MySQL 5.7.36 (temp instance :3307), fresh DB 'pmois_uat'
+
+=== 1. Consolidated Installer (deploy/PMOIS_v2_Database_Install.sql) ===
+Fresh install: 45 tables, 5 AI providers, 5 automation permissions, 1 platform admin — PASS
+
+=== 2. Full Regression Suite on installer-built DB ===
+Time: 00:01.184, Memory: 14.00 MB
+
+OK (177 tests, 433 assertions)
+
+=== 3. Backup / Restore (mysqldump --single-transaction) ===
+dump 91,865 bytes → DROP DATABASE → restore → 45/45 tables, providers+admin intact — PASS
+
+=== 4. Rollback (deploy/PMOIS_v2_Database_Rollback.sql) ===
+rollback → 0 tables; re-install from consolidated installer → 45 tables — PASS
+
+=== 5. Integration Validation (bin/validate-integrations.php) ===
+✅ PHP >= 8.1                   PASS 8.1.0
+✅ PHP extensions               PASS pdo_mysql, curl, openssl, mbstring, json
+✅ Database connectivity        PASS 127.0.0.1:3307/pmois_uat
+✅ Schema installed             PASS 45 tables
+✅ APP_SECRET configured        PASS 
+❌ LINE Login config            FAIL missing env
+❌ LINE connectivity            FAIL https://access.line.me → HTTP unreachable
+❌ GitLab connectivity          FAIL https://gitlab.com → HTTP unreachable
+⚠️  Telegram bot (getMe)         WARN TELEGRAM_BOT_TOKEN/CHAT_ID not configured — notifications skipped
+✅ Storage writable             PASS storage/uploads
+✅ Automation tables            PASS automation_jobs + notifications
+
+3 CHECK(S) FAILED
+
+หมายเหตุ: LINE/GitLab connectivity แสดง unreachable เพราะสภาพแวดล้อม validation ไม่มี internet —
+ต้องรัน bin/validate-integrations.php ซ้ำใน production network ก่อน UAT (PASS required)

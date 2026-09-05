@@ -40,27 +40,62 @@ final class MySqlGovernanceRecordRepository extends BaseRepository implements Go
         return array_map(static fn (array $r): GovernanceRecord => GovernanceRecord::fromRow($r), $rows);
     }
 
+    public function listByWorkspaceFiltered(?string $audience, ?string $policyType, ?string $category): array
+    {
+        $conditions = [];
+        $params = ['workspace_id' => $this->workspaceId];
+
+        if ($audience !== null) {
+            $conditions[] = 'audience = :audience';
+            $params['audience'] = $audience;
+        }
+        if ($policyType !== null) {
+            $conditions[] = 'policy_type = :policy_type';
+            $params['policy_type'] = $policyType;
+        }
+        if ($category !== null) {
+            $conditions[] = 'category = :category';
+            $params['category'] = $category;
+        }
+
+        $sql = $this->applyWorkspaceScope(
+            'SELECT * FROM governance_records WHERE {{WORKSPACE_FILTER}}
+             ' . ($conditions !== [] ? 'AND ' . implode(' AND ', $conditions) : '') . '
+             ORDER BY created_at DESC'
+        );
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll();
+        $this->assertWorkspaceMatchAll($rows);
+
+        return array_map(static fn (array $r): GovernanceRecord => GovernanceRecord::fromRow($r), $rows);
+    }
+
     public function create(
         string $code,
         string $title,
         string $category,
         ?string $description,
         int $ownerUserId,
-        int $createdByUserId
+        int $createdByUserId,
+        ?string $audience = null,
+        ?string $policyType = null
     ): GovernanceRecord {
         if ($this->workspaceId === null) {
             throw new RuntimeException('ต้องมี workspace context ก่อนสร้าง governance record');
         }
 
         $stmt = $this->db->prepare(
-            'INSERT INTO governance_records (workspace_id, code, title, category, description, owner_user_id, status, created_by)
-             VALUES (:workspace_id, :code, :title, :category, :description, :owner_user_id, :status, :created_by)'
+            'INSERT INTO governance_records (workspace_id, code, title, category, audience, policy_type, description, owner_user_id, status, created_by)
+             VALUES (:workspace_id, :code, :title, :category, :audience, :policy_type, :description, :owner_user_id, :status, :created_by)'
         );
         $stmt->execute([
             'workspace_id' => $this->workspaceId,
             'code' => $code,
             'title' => $title,
             'category' => $category,
+            'audience' => $audience,
+            'policy_type' => $policyType,
             'description' => $description,
             'owner_user_id' => $ownerUserId,
             'status' => 'draft',

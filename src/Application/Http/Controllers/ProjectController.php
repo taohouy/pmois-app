@@ -11,8 +11,10 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 
 final class ProjectController
 {
-    public function __construct(private readonly ProjectRepositoryInterface $projectRepo)
-    {
+    public function __construct(
+        private readonly ProjectRepositoryInterface $projectRepo,
+        private readonly \App\Domain\Project\ProjectCreationPipeline $creationPipeline,
+    ) {
     }
 
     /**
@@ -38,36 +40,52 @@ final class ProjectController
     /**
      * POST /api/v1/projects
      * Permission: project.create
+     *
+     * R6: creation ผ่าน ProjectCreationPipeline — template + workspace defaults
+     * (CEO กรอกข้อมูลให้น้อยที่สุด: name, code + cto/dev/mode ที่ pre-fill จาก defaults)
      */
     public function create(Request $request, Response $response): Response
     {
         $userId = (int) $request->getAttribute('user_id');
+        $workspaceId = (int) $request->getAttribute('workspace_id');
         $body = (array) $request->getParsedBody();
 
         if (empty($body['code']) || empty($body['name'])) {
             return ApiResponse::error($response, 'VALIDATION_ERROR', 'ต้องระบุ code และ name', [], 422);
         }
 
-        $project = $this->projectRepo->create(
-            code: $body['code'],
-            name: $body['name'],
-            description: $body['description'] ?? null,
-            ownerUserId: $userId
-        );
+        try {
+            $result = $this->creationPipeline->create($body, $userId, $workspaceId);
+        } catch (\InvalidArgumentException $e) {
+            return ApiResponse::error($response, 'VALIDATION_ERROR', $e->getMessage(), [], 422);
+        }
+
+        $project = $result['project'];
 
         $auditContext = $request->getAttribute('audit_context');
         $auditContext?->record(
             entityType: 'project',
             entityId: $project->id,
-            afterValue: ['code' => $project->code, 'name' => $project->name]
+            afterValue: ['code' => $project->code, 'name' => $project->name],
+            action: 'project_created'
         );
 
-        return ApiResponse::success($response, [
+        $data = [
             'id' => $project->id,
             'code' => $project->code,
             'name' => $project->name,
             'status' => $project->status,
-        ], [], 201);
+            'development_mode' => $project->developmentMode,
+            'source_template_id' => $project->sourceTemplateId,
+            'profile_completeness_percent' => $result['profile_completeness_percent'],
+            'applied' => $result['applied'],
+        ];
+        // raw token คืนครั้งเดียวตอนสร้าง (ไม่เก็บ clear text ในระบบ)
+        if (!empty($result['project_token'])) {
+            $data['project_token'] = $result['project_token'];
+        }
+
+        return ApiResponse::success($response, $data, [], 201);
     }
 
     /**

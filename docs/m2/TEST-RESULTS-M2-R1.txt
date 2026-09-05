@@ -1,0 +1,27 @@
+PMOIS v2 — M2 Implementation Revision 1 — Test Results
+Run date: 2026-09-05 22:28:25
+Environment: PHP 8.1.0 (CLI), MySQL 5.7.36 (temporary local instance, port 3307)
+Database: pmois_test (migrations 0001-0058 — M2 เพิ่ม migration ใหม่ 0 ไฟล์ read-only)
+
+=== Full Suite (M1 R2 + M2 R1) ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+...............................................................  63 / 124 ( 50%)
+.............................................................   124 / 124 (100%)
+
+Time: 00:00.903, Memory: 12.00 MB
+
+OK (124 tests, 286 assertions)
+
+=== M2 Dashboard focus ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+..............                                                    14 / 14 (100%)
+
+Time: 00:00.145, Memory: 8.00 MB
+
+OK (14 tests, 61 assertions)

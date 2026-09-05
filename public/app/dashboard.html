@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PMOIS v2 — Dashboard</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="container">
+  <h1>Workspace Dashboard</h1>
+
+  <div class="grid cols-4" id="stats"></div>
+
+  <div class="grid cols-3" style="margin-top:16px">
+    <div class="card"><h3>Progress Summary</h3><div id="progress"></div></div>
+    <div class="card"><h3>Health Summary</h3><div id="health"></div></div>
+    <div class="card"><h3>Governance</h3><div id="governance"></div></div>
+  </div>
+
+  <div class="card" style="margin-top:16px"><h3>Upcoming Milestones</h3><div id="upcoming"></div></div>
+  <div class="card" style="margin-top:16px"><h3>Recent Releases</h3><div id="releases"></div></div>
+  <div class="card" style="margin-top:16px"><h3>Recent Activities</h3><div id="activities"></div></div>
+
+  <div id="portfolio-section" class="hidden" style="margin-top:24px">
+    <h2>Portfolio (All Workspaces)</h2>
+    <div id="portfolio"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+topbar('dashboard');
+
+(async () => {
+  await requireSession();
+  const d = await api('/api/v1/dashboards/workspace');
+  const p = d.projects;
+
+  document.getElementById('stats').innerHTML = `
+    <div class="card"><h3>Total Projects</h3><div class="stat">${p.total}</div></div>
+    <div class="card"><h3>Avg Progress</h3><div class="stat">${p.avg_progress}%</div><div class="progressbar"><div style="width:${p.avg_progress}%"></div></div></div>
+    <div class="card"><h3>Profile Completeness</h3><div class="stat">${p.avg_completeness}%</div></div>
+    <div class="card"><h3>Milestones Open/Closed</h3><div class="stat">${d.milestones.open} / ${d.milestones.closed}</div></div>`;
+
+  document.getElementById('progress').innerHTML = Object.entries(
+    await api('/api/v1/dashboards/progress-summary').then(s => s.buckets)
+  ).map(([k, v]) => `<div>${k}: <strong>${v}</strong> projects</div>`).join('');
+
+  const h = await api('/api/v1/dashboards/health-summary');
+  document.getElementById('health').innerHTML =
+    `<div>${badge('green', 'green')} ${h.green}</div><div>${badge('yellow', 'yellow')} ${h.yellow}</div><div>${badge('red', 'red')} ${h.red}</div>`;
+
+  const g = d.governance;
+  document.getElementById('governance').innerHTML =
+    `<div>Total adoptions: <strong>${g.total}</strong></div><div>Compliant: ${g.compliant}</div><div>In progress: ${g.in_progress}</div><div>Non-compliant: ${g.non_compliant}</div>`;
+
+  document.getElementById('upcoming').innerHTML = d.upcoming_milestones.length
+    ? '<table><tr><th>Project</th><th>Milestone</th><th>Planned</th></tr>' +
+      d.upcoming_milestones.map(m => `<tr><td>${esc(m.project_code)}</td><td>${esc(m.code)} — ${esc(m.title)}</td><td>${esc(m.planned_date)}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ไม่มี milestone ที่กำลังจะมาถึง</span>';
+
+  document.getElementById('releases').innerHTML = d.recent_releases.length
+    ? '<table><tr><th>Project</th><th>Release</th><th>Status</th></tr>' +
+      d.recent_releases.map(r => `<tr><td>${esc(r.project_code)}</td><td>${esc(r.release_type)} ${esc(r.version_label)}</td><td>${statusBadge(r.status)}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ยังไม่มี release</span>';
+
+  document.getElementById('activities').innerHTML = d.recent_activities.length
+    ? '<table><tr><th>When</th><th>Action</th><th>Entity</th><th>By</th></tr>' +
+      d.recent_activities.map(a => `<tr><td>${esc(a.created_at)}</td><td>${esc(a.action)}</td><td>${esc(a.entity_type)}#${esc(a.entity_id)}</td><td>${esc(a.user_name || '-')}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ไม่มีกิจกรรม</span>';
+
+  // Portfolio — แสดงเฉพาะเมื่อเป็น platform admin (API 403 สำหรับคนอื่น)
+  try {
+    const portfolio = await api('/api/v1/dashboards/portfolio');
+    document.getElementById('portfolio-section').classList.remove('hidden');
+    document.getElementById('portfolio').innerHTML =
+      '<table><tr><th>Workspace</th><th>Projects</th><th>Avg Progress</th><th>Health</th></tr>' +
+      portfolio.workspaces.map(w => `<tr><td>${esc(w.name)}</td><td>${w.projects}</td><td>${w.avg_progress_percent}%</td>
+        <td>${badge('G', 'green')} ${w.health.green} ${badge('Y', 'yellow')} ${w.health.yellow} ${badge('R', 'red')} ${w.health.red}</td></tr>`).join('') +
+      '</table>';
+  } catch (e) { /* non-admin — ปกติ */ }
+})();
+</script>
+</body>
+</html>

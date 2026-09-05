@@ -105,15 +105,6 @@ final class MySqlUserRepository implements UserRepositoryInterface
         return $user;
     }
 
-    public function findByLineUserId(string $lineUserId): ?User
-    {
-        $stmt = $this->db->prepare('SELECT * FROM users WHERE line_user_id = :line_user_id LIMIT 1');
-        $stmt->execute(['line_user_id' => $lineUserId]);
-        $row = $stmt->fetch();
-
-        return $row !== false ? User::fromRow($row) : null;
-    }
-
     public function updateLineInfo(int $id, string $lineUserId, string $lineDisplayName, string $avatarUrl, string $authProvider): bool
     {
         $stmt = $this->db->prepare(

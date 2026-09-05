@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PMOIS v2 — Projects</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="container">
+  <h1>Projects</h1>
+
+  <div class="card" style="margin-bottom:16px">
+    <h3>Create Project (CEO — กรอกน้อยที่สุด)</h3>
+    <form id="createForm" class="inline">
+      <div><label>Name *</label><input name="name" required></div>
+      <div><label>Code *</label><input name="code" required placeholder="MAR-00100"></div>
+      <div><label>CTO User ID</label><input name="cto_user_id" type="number" placeholder="default จาก workspace"></div>
+      <div><label>Dev User ID</label><input name="dev_user_id" type="number" placeholder="default จาก workspace"></div>
+      <div><label>Mode</label>
+        <select name="development_mode">
+          <option value="">default</option>
+          <option value="manual">Manual</option>
+          <option value="ai_assisted">AI Assisted</option>
+          <option value="ai_dev_auto">AI Dev Auto</option>
+        </select>
+      </div>
+      <button class="btn primary">Create</button>
+    </form>
+    <p id="createMsg" class="hidden"></p>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<script src="app.js"></script>
+<script>
+topbar('projects');
+
+(async () => {
+  await requireSession();
+  await loadProjects();
+
+  document.getElementById('createForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = {};
+    for (const [k, v] of fd.entries()) if (v !== '') body[k] = Number.isNaN(Number(v)) || k === 'name' || k === 'code' ? v : Number(v);
+
+    const msg = document.getElementById('createMsg');
+    try {
+      const created = await api('/api/v1/projects', { method: 'POST', body: JSON.stringify(body) });
+      msg.className = '';
+      msg.textContent = `สร้างโครงการ #${created.id} สำเร็จ (completeness ${created.profile_completeness_percent}%)` +
+        (created.project_token ? ' — Project Token (แสดงครั้งเดียว): ' + created.project_token : '');
+      e.target.reset();
+      loadProjects();
+    } catch (err) {
+      msg.className = 'error';
+      msg.textContent = `${err.code}: ${err.message}`;
+    }
+  });
+})();
+
+async function loadProjects() {
+  const projects = await api('/api/v1/projects');
+  document.getElementById('list').innerHTML = projects.length
+    ? '<table><tr><th>ID</th><th>Code</th><th>Name</th><th>Status</th><th></th></tr>' +
+      projects.map(p => `<tr>
+        <td>${p.id}</td><td>${esc(p.code)}</td><td>${esc(p.name)}</td><td>${statusBadge(p.status)}</td>
+        <td><a class="btn" href="/app/project.html?id=${p.id}">Open</a></td></tr>`).join('') + '</table>'
+    : '<span class="muted">ยังไม่มีโครงการ</span>';
+}
+</script>
+</body>
+</html>

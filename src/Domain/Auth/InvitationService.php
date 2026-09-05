@@ -4,76 +4,81 @@ declare(strict_types=1);
 
 namespace App\Domain\Auth;
 
-use Lcobucci\JWT\Configuration;
-use Lcobucci\JWT\Signer\Rsa\Sha256;
-use Lcobucci\JWT\Token;
-use Lcobucci\JWT\Signer\Key\InMemory;
+use App\Domain\Identity\RoleRepositoryInterface;
+use App\Domain\Identity\UserRepositoryInterface;
+use App\Domain\Project\ProjectRepositoryInterface;
+use App\Domain\Workspace\WorkspaceMemberRepositoryInterface;
 
+/**
+ * InvitationService — Invitation/Account Claim flow (M0 R5 §7.1, M1 Plan §3.2)
+ *
+ * Claim token: HMAC-SHA256 signed payload (base64url) — ไม่พึ่ง dependency ภายนอก
+ * โครงสร้าง: base64url(json payload) . '.' . base64url(hmac) โดย payload มี exp (24h)
+ *
+ * หลัก fail-closed (ห้ามลืม):
+ *  - การสร้าง account ทำที่นี่เท่านั้น (placeholder user + active membership + claim token)
+ *  - LINE Login ปกติ "ไม่สร้าง" user/membership — แค่ bind line_user_id ผ่าน claim
+ */
 final class InvitationService
 {
-    private Configuration $jwtConfig;
+    private const TOKEN_TTL_HOURS = 24;
 
     public function __construct(
-        private readonly \App\Domain\Project\ProjectRepositoryInterface $projectRepository,
-        private readonly \App\Domain\Workspace\WorkspaceMemberRepositoryInterface $workspaceMemberRepository,
-        private readonly \App\Domain\Identity\UserRepositoryInterface $userRepository,
-        private readonly \App\Domain\Auth\LineLoginService $lineLoginService,
+        private readonly ProjectRepositoryInterface $projectRepository,
+        private readonly WorkspaceMemberRepositoryInterface $workspaceMemberRepository,
+        private readonly UserRepositoryInterface $userRepository,
+        private readonly LineLoginService $lineLoginService,
+        private readonly RoleRepositoryInterface $roleRepository,
     ) {
-        $this->jwtConfig = Configuration::forSymmetricSigner(
-            new \Lcobucci\JWT\Signer\Hmac\Sha256(),
-            InMemory::plainText('your-secret-key-change-in-production')
-        );
     }
 
     public function createInvitation(int $workspaceId, int $projectId, int $actorId, string $roleCode, int $invitedBy): string
     {
         // Create placeholder user (without line_user_id)
-        $userId = $this->userRepository->create([
-            'name' => 'Pending User',
-            'email' => 'pending_' . uniqid() . '@placeholder',
-            'password_hash' => null,
-            'auth_provider' => 'line',
-            'line_user_id' => null,
-        ]);
+        $user = $this->userRepository->createWithLine(
+            'Pending User',
+            'pending_' . uniqid() . '@placeholder',
+            '',
+            'line'
+        );
 
-        // Create workspace member with active status (will be activated after LINE binding)
-        $this->workspaceMemberRepository->create([
+        // Resolve role (MEMBER default) — role ต้องมีจริงจาก migration 0011
+        $role = $this->roleRepository->findByCode($roleCode);
+        if ($role === null) {
+            throw new \InvalidArgumentException("role '{$roleCode}' not seeded");
+        }
+
+        // Active membership ทันที (claim เป็นแค่การ bind line_user_id ภายหลัง)
+        $this->workspaceMemberRepository->create(
+            $workspaceId,
+            $user->id,
+            $role->id,
+            'active'
+        );
+
+        return $this->signToken([
             'workspace_id' => $workspaceId,
-            'user_id' => $userId,
-            'role_id' => $this->getRoleIdByCode('MEMBER'), // default role, can be overridden
-            'status' => 'active',
+            'project_id' => $projectId,
+            'user_id' => $user->id,
+            'role_code' => $roleCode,
+            'exp' => time() + self::TOKEN_TTL_HOURS * 3600,
         ]);
-
-        // Generate claim token (JWT with 24h expiry)
-        $now = new \DateTimeImmutable();
-        $token = $this->jwtConfig->builder()
-            ->issuedBy('pmois')
-            ->permittedFor('pmois')
-            ->identifiedBy('invite-' . uniqid())
-            ->issuedAt(new \DateTimeImmutable())
-            ->expiresAt($now->modify('+24 hours'))
-            ->withClaim('workspace_id', $workspaceId)
-            ->withClaim('user_id', $userId)
-            ->withClaim('role_code', 'MEMBER')
-            ->getToken($this->jwtConfig->signer(), $this->jwtConfig->signingKey());
-
-        return $token->toString();
     }
 
+    /**
+     * @return array<string, mixed>|null
+     */
     public function validateClaimToken(string $token): ?array
     {
-        try {
-            $parsed = $this->jwtConfig->parser()->parse($token);
-            $this->jwtConfig->validator()->assert($this->jwtConfig->validator()->validate($parsed));
-
-            return [
-                'workspace_id' => $parsed->claims()->get('workspace_id'),
-                'user_id' => $parsed->claims()->get('user_id'),
-                'role_code' => $parsed->claims()->get('role_code'),
-            ];
-        } catch (\Throwable) {
+        $payload = $this->parseToken($token);
+        if ($payload === null) {
             return null;
         }
+        if (!isset($payload['exp']) || (int) $payload['exp'] < time()) {
+            return null;
+        }
+
+        return $payload;
     }
 
     public function processClaim(string $token, string $lineSub, string $lineDisplayName, string $avatarUrl): int
@@ -83,20 +88,79 @@ final class InvitationService
             throw new \InvalidArgumentException('Invalid or expired claim token');
         }
 
-        $userId = $claims['user_id'];
-        $workspaceId = $claims['workspace_id'];
+        $userId = (int) $claims['user_id'];
 
-        // Update user with LINE info
-        // This would update the user record with LINE profile data
-        // Implementation depends on UserRepository having an update method
+        // claim reuse — account นี้ถูก bind ไปแล้ว (ห้าม claim ซ้ำ)
+        $user = $this->userRepository->findById($userId);
+        if ($user === null) {
+            throw new \InvalidArgumentException('Claim token points to a missing account');
+        }
+        if ($user->lineUserId !== null && $user->lineUserId !== '') {
+            throw new \DomainException('CLAIM_ALREADY_USED');
+        }
 
-        return $claims['user_id'];
+        // duplicate binding — LINE account นี้ถูก bind กับ user อื่นอยู่แล้ว
+        $existing = $this->userRepository->findByLineUserId($lineSub);
+        if ($existing !== null && $existing->id !== $userId) {
+            throw new \DomainException('LINE_ALREADY_BOUND');
+        }
+
+        // bind line_user_id — จุดเดียวที่ LINE identity ถูกผูกกับ account (fail-closed rule)
+        $this->userRepository->updateLineInfo($userId, $lineSub, $lineDisplayName, $avatarUrl, 'line');
+
+        return $userId;
     }
 
-    private function getRoleIdByCode(string $roleCode): int
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function signToken(array $payload): string
     {
-        // This should be implemented with a role repository
-        // For now, return a default
-        return 1;
+        $body = $this->base64UrlEncode((string) json_encode($payload));
+        $signature = $this->base64UrlEncode(hash_hmac('sha256', $body, $this->secret(), true));
+
+        return $body . '.' . $signature;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function parseToken(string $token): ?array
+    {
+        $parts = explode('.', $token);
+        if (count($parts) !== 2) {
+            return null;
+        }
+
+        [$body, $signature] = $parts;
+        $expected = $this->base64UrlEncode(hash_hmac('sha256', $body, $this->secret(), true));
+        if (!hash_equals($expected, $signature)) {
+            return null;
+        }
+
+        $decoded = json_decode($this->base64UrlDecode($body), true);
+
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    private function secret(): string
+    {
+        // Configuration over Hardcode: APP_SECRET จาก env — fallback สำหรับ dev เท่านั้น
+        return $GLOBALS['app_env']['APP_SECRET'] ?? 'pmois-dev-secret-change-in-production';
+    }
+
+    private function base64UrlEncode(string $data): string
+    {
+        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+    }
+
+    private function base64UrlDecode(string $data): string
+    {
+        $remainder = strlen($data) % 4;
+        if ($remainder !== 0) {
+            $data .= str_repeat('=', 4 - $remainder);
+        }
+
+        return (string) base64_decode(strtr($data, '-_', '+/'), true);
     }
 }

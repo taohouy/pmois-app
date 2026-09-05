@@ -1,0 +1,39 @@
+PMOIS v2 — M3 Implementation Revision 1 — Test Results
+Run date: 2026-09-05 22:50:36
+Environment: PHP 8.1.0 (CLI), MySQL 5.7.36 (temporary local instance, port 3307)
+Database: pmois_test (migrations 0001-0059; 0059 = project_deployments)
+
+=== Full Suite (M1 R2 + M2 + M3) ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+...............................................................  63 / 136 ( 46%)
+............................................................... 126 / 136 ( 92%)
+..........                                                      136 / 136 (100%)
+
+Time: 00:01.404, Memory: 12.00 MB
+
+OK (136 tests, 318 assertions)
+
+=== M3 Revision Workflow focus ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+........                                                            8 / 8 (100%)
+
+Time: 00:00.120, Memory: 8.00 MB
+
+OK (8 tests, 24 assertions)
+
+=== M3 Deployment Tracking focus ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+....                                                                4 / 4 (100%)
+
+Time: 00:00.033, Memory: 8.00 MB
+
+OK (4 tests, 8 assertions)

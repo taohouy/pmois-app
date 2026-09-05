@@ -19,9 +19,7 @@ final class AiConsumerController
     {
         $consumers = $this->consumerRepo->listByWorkspace();
 
-        return ApiResponse::success($response, array_map(static fn ($c) => [
-            'id' => $c->id, 'code' => $c->code, 'name' => $c->name, 'status' => $c->status,
-        ], $consumers));
+        return ApiResponse::success($response, array_map(static fn ($c) => $c->toArray(), $consumers));
     }
 
     public function create(Request $request, Response $response): Response
@@ -32,8 +30,12 @@ final class AiConsumerController
         if (empty($body['code']) || empty($body['name'])) {
             return ApiResponse::error($response, 'VALIDATION_ERROR', 'ต้องระบุ code และ name', [], 422);
         }
+        // CTO Requirement #2: Agent ต้องระบุ Provider จาก Registry เสมอ (PROVIDER_REQUIRED)
+        if (empty($body['provider_id'])) {
+            return ApiResponse::error($response, 'PROVIDER_REQUIRED', 'provider_id is required — agents must reference a registered provider', [], 422);
+        }
 
-        $consumer = $this->consumerRepo->create($body['code'], $body['name'], $body['description'] ?? null, $userId);
+        $consumer = $this->consumerRepo->create($body['code'], $body['name'], $body['description'] ?? null, $userId, (int) $body['provider_id']);
 
         $auditContext = $request->getAttribute('audit_context');
         $auditContext?->record(entityType: 'ai_consumer', entityId: $consumer->id, afterValue: ['code' => $consumer->code]);

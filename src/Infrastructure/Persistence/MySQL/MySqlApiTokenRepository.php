@@ -38,6 +38,19 @@ final class MySqlApiTokenRepository extends BaseRepository implements ApiTokenRe
         ];
     }
 
+    public function listByProject(int $workspaceId, int $projectId): array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT id, token_name, scopes, status, expires_at, last_used_at, created_at
+             FROM api_tokens
+             WHERE workspace_id = :workspace_id AND project_id = :project_id
+             ORDER BY created_at DESC'
+        );
+        $stmt->execute(['workspace_id' => $workspaceId, 'project_id' => $projectId]);
+
+        return $stmt->fetchAll();
+    }
+
     public function findByHash(string $tokenHash): ?array
     {
         $stmt = $this->db->prepare('SELECT * FROM api_tokens WHERE token_hash = :hash LIMIT 1');

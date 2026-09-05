@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PMOIS v2 — Project Detail</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="container">
+  <p><a href="/app/projects.html">← Projects</a></p>
+  <h1 id="title">…</h1>
+  <div id="badges"></div>
+
+  <div class="grid cols-4" id="stats" style="margin-top:16px"></div>
+
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card"><h3>Submit Revision (Dev)</h3>
+      <form id="revForm">
+        <label>Summary *</label><textarea name="summary" required></textarea>
+        <label>Milestone ID (optional)</label><input name="milestone_id" type="number">
+        <label>Branch</label><input name="branch">
+        <label>Test Result</label>
+        <select name="test_result"><option value="pending">pending</option><option value="passed">passed</option><option value="failed">failed</option><option value="skipped">skipped</option></select>
+        <label>Known Issue</label><textarea name="known_issue"></textarea>
+        <button class="btn primary">Submit</button>
+      </form>
+      <p id="revMsg" class="hidden"></p>
+    </div>
+    <div class="card"><h3>Create Deployment (CTO/Dev)</h3>
+      <form id="depForm">
+        <label>Release ID (optional)</label><input name="release_id" type="number">
+        <label>Environment ID (optional)</label><input name="environment_id" type="number">
+        <label>Notes</label><textarea name="notes"></textarea>
+        <button class="btn primary">Create</button>
+      </form>
+      <p id="depMsg" class="hidden"></p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px"><h3>Revisions (Commit Tracking)</h3><div id="revisions"></div></div>
+  <div class="card" style="margin-top:16px"><h3>Deployments</h3><div id="deployments"></div></div>
+  <div class="card" style="margin-top:16px"><h3>Timeline</h3><div id="timeline"></div></div>
+  <div class="card" style="margin-top:16px"><h3>Activity History</h3><div id="activities"></div></div>
+  <div class="card" style="margin-top:16px"><h3>Governance Binding</h3>
+    <p class="muted small">Project ใหม่รับ governance baseline อัตโนมัติจาก workspace default / template — publish version ใหม่ไม่กระทบ adoption เดิม (versioning)</p>
+    <form class="inline" id="bindForm">
+      <div><label>Governance Version ID</label><input name="governance_version_id" type="number" required></div>
+      <button class="btn primary">Bind</button>
+    </form>
+    <p id="bindMsg" class="hidden"></p>
+    <div id="adoptions" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+topbar('projects');
+const projectId = new URLSearchParams(location.search).get('id');
+
+(async () => {
+  await requireSession();
+  await loadDashboard();
+  await loadRevisions();
+  await loadDeployments();
+
+  document.getElementById('revForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = { project_id: Number(projectId) };
+    for (const [k, v] of fd.entries()) if (v !== '') body[k] = k === 'milestone_id' ? Number(v) : v;
+    const msg = document.getElementById('revMsg');
+    try {
+      const r = await api('/api/v1/revisions', { method: 'POST', body: JSON.stringify(body) });
+      msg.className = ''; msg.textContent = `ส่ง revision #${r.id} รอ CTO review`;
+      e.target.reset(); loadRevisions();
+    } catch (err) { msg.className = 'error'; msg.textContent = `${err.code}: ${err.message}`; }
+  });
+
+  document.getElementById('depForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = { };
+    for (const [k, v] of fd.entries()) if (v !== '') body[k] = Number(v);
+    const msg = document.getElementById('depMsg');
+    try {
+      await api(`/api/v1/projects/${projectId}/deployments`, { method: 'POST', body: JSON.stringify(body) });
+      msg.className = ''; msg.textContent = 'สร้าง deployment แล้ว';
+      e.target.reset(); loadDeployments();
+    } catch (err) { msg.className = 'error'; msg.textContent = `${err.code}: ${err.message}`; }
+  });
+})();
+
+async function loadDashboard() {
+  const d = await api(`/api/v1/projects/${projectId}/dashboard`);
+  document.getElementById('title').textContent = `${d.project.code} — ${d.project.name}`;
+  document.getElementById('badges').innerHTML =
+    statusBadge(d.project.status) + ' ' + healthBadge(d.project.health) + ' ' +
+    badge(d.project.development_mode, 'blue');
+  const p = d.project;
+  document.getElementById('stats').innerHTML = `
+    <div class="card"><h3>Progress</h3><div class="stat">${p.progress_percent}%</div><div class="progressbar"><div style="width:${p.progress_percent}%"></div></div></div>
+    <div class="card"><h3>Profile Completeness</h3><div class="stat">${p.profile_completeness_percent}%</div></div>
+    <div class="card"><h3>Milestones</h3><div class="stat">${d.milestones.open} open</div><div class="muted">${d.milestones.closed} closed${d.milestones.next ? ' · next: ' + esc(d.milestones.next.code) : ''}</div></div>
+    <div class="card"><h3>Team</h3><div class="stat">${d.team.humans + d.team.ai_agents}</div><div class="muted">${d.team.humans} human · ${d.team.ai_agents} AI</div></div>`;
+
+  document.getElementById('timeline').innerHTML = d.timeline.length
+    ? '<table><tr><th>When</th><th>Event</th><th>Detail</th></tr>' +
+      d.timeline.map(t => `<tr><td>${esc(t.occurred_at)}</td><td>${badge(t.event_type, 'blue')}</td><td>${esc(t.detail)}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ยังไม่มีเหตุการณ์</span>';
+
+  const acts = await api(`/api/v1/projects/${projectId}/activities`);
+  document.getElementById('activities').innerHTML = acts.length
+    ? '<table><tr><th>When</th><th>Action</th><th>By</th></tr>' +
+      acts.map(a => `<tr><td>${esc(a.created_at)}</td><td>${esc(a.action)}</td><td>${esc(a.user_name || '-')}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ยังไม่มีกิจกรรม</span>';
+
+  await loadAdoptions();
+
+  document.getElementById('bindForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const versionId = new FormData(e.target).get('governance_version_id');
+    const msg = document.getElementById('bindMsg');
+    try {
+      await api(`/api/v1/projects/${projectId}/governance-adoptions`, { method: 'POST', body: JSON.stringify({ governance_version_id: Number(versionId) }) });
+      msg.className = ''; msg.textContent = 'ผูก governance version สำเร็จ';
+      loadAdoptions();
+    } catch (err) { msg.className = 'error'; msg.textContent = `${err.code}: ${err.message}`; }
+  });
+}
+
+async function loadAdoptions() {
+  const adoptions = await api(`/api/v1/projects/${projectId}/governance-adoptions`);
+  document.getElementById('adoptions').innerHTML = adoptions.length
+    ? '<table><tr><th>#</th><th>Governance Version</th><th>Adoption Status</th><th>Adopted</th><th></th></tr>' +
+      adoptions.map(a => `<tr><td>#${a.id}</td><td>version #${a.governance_version_id}</td>
+        <td>${statusBadge(a.adoption_status)}</td><td>${esc(a.adopted_date)}</td>
+        <td>${a.status === 'active' ? `<button class="btn" onclick="retireAdoption(${a.id})">Retire</button>` : ''}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ยังไม่มี governance binding</span>';
+}
+
+async function retireAdoption(id) {
+  try {
+    await api(`/api/v1/governance-adoptions/${id}/retire`, { method: 'PUT' });
+    loadAdoptions();
+  } catch (err) { alert(`${err.code}: ${err.message}`); }
+}
+
+async function loadRevisions() {
+  const revisions = await api(`/api/v1/projects/${projectId}/revisions`);
+  document.getElementById('revisions').innerHTML = revisions.length
+    ? '<table><tr><th>#</th><th>Summary</th><th>Status</th><th>Test</th><th>Commit</th><th>Actions</th></tr>' +
+      revisions.map(r => `<tr>
+        <td>#${r.id}</td><td>${esc(r.summary)}</td><td>${statusBadge(r.status)}</td><td>${statusBadge(r.test_result)}</td>
+        <td>${esc(r.commit_hash || '-')}</td>
+        <td>${r.status === 'cto_approved' ? `<button class="btn primary" onclick="commit(${r.id})">Commit</button>` : ''}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ยังไม่มี revision</span>';
+}
+
+async function commit(revisionId) {
+  const hash = prompt('Commit hash:');
+  if (!hash) return;
+  try {
+    await api(`/api/v1/revisions/${revisionId}/commit`, { method: 'PATCH', body: JSON.stringify({ commit_hash: hash, push_status: 'success' }) });
+    loadRevisions();
+  } catch (err) { alert(`${err.code}: ${err.message}`); }
+}
+
+async function loadDeployments() {
+  const deployments = await api(`/api/v1/projects/${projectId}/deployments`);
+  document.getElementById('deployments').innerHTML = deployments.length
+    ? '<table><tr><th>#</th><th>Release</th><th>Environment</th><th>Status</th><th>Deployed</th><th>Actions</th></tr>' +
+      deployments.map(d => `<tr>
+        <td>#${d.id}</td><td>${d.release_id ? '#' + d.release_id : '-'}</td><td>${d.environment_id ? '#' + d.environment_id : '-'}</td>
+        <td>${statusBadge(d.status)}</td><td>${esc(d.deployed_at || '-')}</td>
+        <td>${d.status === 'pending' ? `<button class="btn" onclick="depTransition(${d.id}, 'in_progress')">Start</button>` : ''}
+            ${d.status === 'in_progress' ? `<button class="btn primary" onclick="depTransition(${d.id}, 'deployed')">Mark Deployed</button>` : ''}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ยังไม่มี deployment</span>';
+}
+
+async function depTransition(id, status) {
+  try {
+    await api(`/api/v1/deployments/${id}/transition`, { method: 'PATCH', body: JSON.stringify({ status }) });
+    loadDeployments();
+  } catch (err) { alert(`${err.code}: ${err.message}`); }
+}
+</script>
+</body>
+</html>

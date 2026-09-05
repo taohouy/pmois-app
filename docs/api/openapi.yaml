@@ -1,0 +1,205 @@
+openapi: 3.0.3
+info:
+  title: PMOIS v2 API
+  version: 1.0.0 (M1-M5)
+  description: >
+    PMOIS v2 REST API — API First, single business-rule set for API and Web UI.
+    Auth: Bearer api_tokens or pmois_session cookie (LINE Login).
+    Rate limited per identity (X-RateLimit-* headers).
+servers:
+  - url: /api/v1
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+    sessionCookie: { type: apiKey, in: cookie, name: pmois_session }
+  schemas:
+    Envelope:
+      type: object
+      properties:
+        success: { type: boolean }
+        data: {}
+        error:
+          type: object
+          nullable: true
+          properties: { code: { type: string }, message: { type: string }, details: { type: array, items: {} } }
+        meta: { type: object }
+    Project:
+      type: object
+      properties:
+        id: { type: integer }
+        code: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [planning, active, on_hold, closed] }
+        health: { type: string, enum: [green, yellow, red] }
+        progress_percent: { type: integer }
+        profile_completeness_percent: { type: integer }
+        development_mode: { type: string, enum: [manual, ai_assisted, ai_dev_auto] }
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      security: []
+      summary: API health (DB connectivity check)
+      responses: { "200": { description: ok/degraded } }
+  /projects:
+    get:
+      summary: List projects (workspace-scoped)
+      parameters: [{ name: project_id, in: path, required: false, schema: { type: integer } }]
+      responses: { "200": { description: OK } }
+    post:
+      summary: Create project (CEO minimal input; template + workspace defaults applied)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, code]
+              properties:
+                name: { type: string }
+                code: { type: string }
+                cto_user_id: { type: integer }
+                dev_user_id: { type: integer }
+                development_mode: { type: string, enum: [manual, ai_assisted, ai_dev_auto] }
+                template_id: { type: integer }
+                parent_project_id: { type: integer }
+      responses: { "201": { description: Created (project_token returned once if template auto-creates) } }
+  /projects/{project_id}/dashboard:
+    get:
+      summary: Project dashboard (+ children roll-up when parent)
+      parameters: [{ name: project_id, in: path, required: true, schema: { type: integer } }]
+      responses: { "200": { description: OK }, "404": { description: fail-closed cross-workspace } }
+  /projects/{project_id}/timeline:
+    get:
+      summary: Merged event timeline
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: integer } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses: { "200": { description: OK } }
+  /projects/{project_id}/activities:
+    get: { summary: Project activity history (audit-based), responses: { "200": { description: OK } } }
+  /projects/{project_id}/milestones:
+    get: { summary: List milestones, responses: { "200": { description: OK } } }
+    post:
+      summary: Create milestone
+      requestBody: { content: { application/json: { schema: { type: object, required: [code, title], properties: { code: { type: string }, title: { type: string }, planned_date: { type: string } } } } } }
+      responses: { "201": { description: Created } }
+  /milestones/{id}/close:
+    patch: { summary: Close milestone (CTO only), responses: { "200": { description: OK } } }
+  /revisions:
+    post:
+      summary: Submit revision (Dev human or AI)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, summary]
+              properties:
+                project_id: { type: integer }
+                summary: { type: string }
+                milestone_id: { type: integer }
+                test_result: { type: string, enum: [passed, failed, skipped, pending] }
+                dev_user_id: { type: integer, nullable: true }
+                dev_ai_consumer_id: { type: integer, nullable: true }
+      responses:
+        "201": { description: Created }
+        "409": { description: MILESTONE_NOT_OPEN }
+  /revisions/{id}/review:
+    post:
+      summary: CTO review decision
+      requestBody: { content: { application/json: { schema: { type: object, required: [decision], properties: { decision: { type: string, enum: [approved, rejected] }, review_note: { type: string } } } } } }
+      responses:
+        "200": { description: OK }
+        "409": { description: REVISION_ALREADY_REVIEWED }
+  /revisions/{id}/commit:
+    patch:
+      summary: Record commit (requires cto_approved)
+      requestBody: { content: { application/json: { schema: { type: object, required: [commit_hash], properties: { commit_hash: { type: string }, branch: { type: string }, push_status: { type: string, enum: [pending, success, failed] } } } } } }
+      responses:
+        "200": { description: OK (PMO timeline row auto-created) }
+        "409": { description: REVISION_NOT_APPROVED }
+  /projects/{project_id}/releases:
+    get: { summary: Release registry, responses: { "200": { description: OK } } }
+    post:
+      summary: Create release
+      requestBody: { content: { application/json: { schema: { type: object, required: [version_label], properties: { release_type: { type: string, enum: [alpha, beta, rc, production, hotfix] }, version_label: { type: string }, environment_id: { type: integer } } } } } }
+      responses: { "201": { description: Created } }
+  /releases/{id}/transition:
+    patch:
+      summary: Release state machine (planned→in_progress→released→rolled_back/cancelled)
+      requestBody: { content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string } } } } } }
+      responses: { "200": { description: OK } }
+  /projects/{project_id}/deployments:
+    get: { summary: Deployment tracking list, responses: { "200": { description: OK } } }
+    post: { summary: Create deployment, responses: { "201": { description: Created } } }
+  /deployments/{id}/transition:
+    patch: { summary: Deployment state machine (pending→in_progress→deployed→rolled_back/failed), responses: { "200": { description: OK } } }
+  /projects/{project_id}/dependencies:
+    get: { summary: Dependency edges, responses: { "200": { description: OK } } }
+    post:
+      summary: Add dependency edge (depends_on must stay acyclic)
+      requestBody: { content: { application/json: { schema: { type: object, required: [related_project_id], properties: { related_project_id: { type: integer }, dependency_type: { type: string, enum: [depends_on, blocked_by] } } } } } }
+      responses:
+        "201": { description: Created }
+        "409": { description: DEPENDENCY_CIRCULAR / DEPENDENCY_SELF / DEPENDENCY_WORKSPACE_MISMATCH }
+  /dependencies/graph:
+    get: { summary: Portfolio dependency graph, responses: { "200": { description: OK } } }
+  /dashboards/workspace:
+    get: { summary: Workspace dashboard, responses: { "200": { description: OK } } }
+  /dashboards/portfolio:
+    get: { summary: Portfolio dashboard (platform admin only), responses: { "200": { description: OK }, "403": { description: forbidden } } }
+  /dashboards/progress-summary:
+    get: { summary: Progress summary (buckets), responses: { "200": { description: OK } } }
+  /dashboards/health-summary:
+    get: { summary: Health summary (separate from progress), responses: { "200": { description: OK } } }
+  /dashboards/statistics:
+    get: { summary: Portfolio statistics, responses: { "200": { description: OK } } }
+  /dashboards/recent-activities:
+    get: { summary: Recent activities, parameters: [{ name: limit, in: query, schema: { type: integer } }], responses: { "200": { description: OK } } }
+  /audit-logs:
+    get:
+      summary: Audit logs (audit_trail.view)
+      parameters:
+        - { name: limit, in: query, schema: { type: integer } }
+        - { name: entity_type, in: query, schema: { type: string } }
+        - { name: entity_id, in: query, schema: { type: integer } }
+      responses: { "200": { description: OK } }
+  /projects/{project_id}/api-tokens:
+    get: { summary: Project API tokens (M5), responses: { "200": { description: OK } } }
+  /auth/tokens:
+    post:
+      summary: Create API token (raw token returned once; optional scopes + project_id)
+      requestBody: { content: { application/json: { schema: { type: object, properties: { token_name: { type: string }, scopes: { type: array, items: { type: string, enum: [read, write, ai_context] } }, project_id: { type: integer } } } } } }
+      responses: { "201": { description: Created } }
+  /platform/metrics:
+    get: { summary: Platform metrics (admin), responses: { "200": { description: OK } } }
+  /governance-records:
+    get:
+      summary: Governance records (M4 filters)
+      parameters:
+        - { name: audience, in: query, schema: { type: string, enum: [all, cto, dev, pmo] } }
+        - { name: policy_type, in: query, schema: { type: string, enum: [review, delivery, approval] } }
+        - { name: category, in: query, schema: { type: string } }
+      responses: { "200": { description: OK } }
+  /governance-policies:
+    get: { summary: Review/Delivery/Approval policies, responses: { "200": { description: OK } } }
+  /governance/working-instructions:
+    get: { summary: CTO/Dev working instructions, responses: { "200": { description: OK } } }
+  /project-templates:
+    get: { summary: Project templates, responses: { "200": { description: OK } } }
+    post: { summary: Create template (payload contract per M0 R6), responses: { "201": { description: Created } } }
+  /workspaces/{id}/default-settings:
+    get: { summary: Workspace defaults, responses: { "200": { description: OK } } }
+    put: { summary: Update defaults, responses: { "200": { description: OK } } }
+  /ai-providers:
+    get: { summary: AI provider registry, responses: { "200": { description: OK } } }
+  /ai-consumers:
+    get: { summary: AI agent registry (provider_id required on create), responses: { "200": { description: OK } } }
+  /git-providers:
+    get: { summary: Git provider registry (GitLab only), responses: { "200": { description: OK } } }
+  /repositories:
+    post:
+      summary: Register GitLab repository (manual metadata)
+      requestBody: { content: { application/json: { schema: { type: object, required: [project_id, repository_name, repository_url], properties: { repository_url: { type: string }, repository_name: { type: string }, default_branch: { type: string } } } } } }
+      responses: { "201": { description: Created } }

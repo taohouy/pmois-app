@@ -1,0 +1,28 @@
+PMOIS v2 — M6 Implementation Revision 1 — Test Results
+Run date: 2026-09-06 00:02:00
+Environment: PHP 8.1.0 (CLI), MySQL 5.7.36 (temporary local instance, port 3307)
+Database: pmois_test (migrations 0001-0062; 0062 = knowledge_entries)
+
+=== Full Suite (M1-M6) ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+...............................................................  63 / 159 ( 39%)
+............................................................... 126 / 159 ( 79%)
+.................................                               159 / 159 (100%)
+
+Time: 00:01.694, Memory: 12.00 MB
+
+OK (159 tests, 380 assertions)
+
+=== M6 Knowledge Center focus ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+.........                                                           9 / 9 (100%)
+
+Time: 00:00.039, Memory: 8.00 MB
+
+OK (9 tests, 21 assertions)

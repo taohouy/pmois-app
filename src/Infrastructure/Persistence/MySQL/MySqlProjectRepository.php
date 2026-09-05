@@ -55,22 +55,26 @@ final class MySqlProjectRepository extends BaseRepository implements ProjectRepo
         ?int $parentProjectId = null,
         string $developmentMode = 'manual',
         ?string $abbreviation = null,
+        ?string $startDate = null,
+        ?int $sourceTemplateId = null,
     ): Project {
         if ($this->workspaceId === null) {
             throw new RuntimeException('ต้องมี workspace context ก่อนสร้าง project');
         }
 
         $stmt = $this->db->prepare(
-            'INSERT INTO projects (workspace_id, parent_project_id, code, abbreviation, name, description, status, development_mode, owner_user_id)
-             VALUES (:workspace_id, :parent_project_id, :code, :abbreviation, :name, :description, :status, :development_mode, :owner_user_id)'
+            'INSERT INTO projects (workspace_id, parent_project_id, source_template_id, code, abbreviation, name, description, start_date, status, development_mode, owner_user_id)
+             VALUES (:workspace_id, :parent_project_id, :source_template_id, :code, :abbreviation, :name, :description, :start_date, :status, :development_mode, :owner_user_id)'
         );
         $stmt->execute([
             'workspace_id' => $workspaceId,
             'parent_project_id' => $parentProjectId,
+            'source_template_id' => $sourceTemplateId,
             'code' => $code,
             'abbreviation' => $abbreviation,
             'name' => $name,
             'description' => $description,
+            'start_date' => $startDate,
             'status' => 'planning',
             'development_mode' => $developmentMode,
             'owner_user_id' => $ownerUserId,

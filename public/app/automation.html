@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PMOIS v2 — Automation</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="container">
+  <h1>Automation Center</h1>
+
+  <div class="grid cols-3" style="margin-top:12px">
+    <div class="card"><h3>AI Dev Auto (dispatch task)</h3>
+      <form id="aiForm">
+        <label>Project ID *</label><input name="project_id" type="number" required>
+        <label>Milestone ID</label><input name="milestone_id" type="number">
+        <label>Task *</label><textarea name="task" required placeholder="Implement feature X per working instructions"></textarea>
+        <button class="btn primary">Dispatch</button>
+      </form>
+      <p id="aiMsg" class="hidden"></p>
+    </div>
+
+    <div class="card"><h3>GitLab Sync (read-only check)</h3>
+      <form id="syncForm">
+        <label>Project ID *</label><input name="project_id" type="number" required>
+        <button class="btn">Queue Sync</button>
+      </form>
+      <p class="muted small">Worker จะตรวจว่า repository URL เข้าถึงได้ (GitLab only) — ไม่มีการเขียน GitLab</p>
+      <p id="syncMsg" class="hidden"></p>
+    </div>
+
+    <div class="card"><h3>Run Due Jobs</h3>
+      <p class="muted small">ปกติรันผ่าน cron: <code>php bin/automation-worker.php</code> — หรือกดรันทันทีที่นี่</p>
+      <button class="btn primary" id="runBtn">Run Due Jobs Now</button>
+      <p id="runMsg" class="hidden"></p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Automation Queue</h3>
+    <form class="inline" id="filterForm">
+      <div><label>Status</label>
+        <select name="status"><option value="">ทั้งหมด</option><option value="queued">queued</option><option value="running">running</option><option value="completed">completed</option><option value="failed">failed</option></select></div>
+      <div><label>Job Type</label>
+        <select name="job_type"><option value="">ทั้งหมด</option><option value="timeline_update">timeline_update</option><option value="project_update">project_update</option><option value="gitlab_sync">gitlab_sync</option><option value="ai_dev_auto">ai_dev_auto</option><option value="notification">notification</option></select></div>
+      <button class="btn">Filter</button>
+    </form>
+    <div id="jobs" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+topbar('automation');
+
+(async () => {
+  await requireSession();
+  await loadJobs();
+
+  document.getElementById('aiForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {};
+    for (const [k, v] of new FormData(e.target).entries()) if (v !== '') body[k] = Number.isNaN(Number(v)) || k === 'task' ? (k === 'task' ? v : Number(v)) : v;
+    const msg = document.getElementById('aiMsg');
+    try {
+      const job = await api('/api/v1/automation/ai-dev-auto', { method: 'POST', body: JSON.stringify(body) });
+      msg.className = ''; msg.textContent = `dispatch แล้ว (job #${job.id}) — รอ worker run`;
+      loadJobs();
+    } catch (err) { msg.className = 'error'; msg.textContent = `${err.code}: ${err.message}`; }
+  });
+
+  document.getElementById('syncForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pid = Number(new FormData(e.target).get('project_id'));
+    const msg = document.getElementById('syncMsg');
+    try {
+      const job = await api('/api/v1/automation/jobs', { method: 'POST', body: JSON.stringify({ job_type: 'gitlab_sync', project_id: pid, payload: { project_id: pid } }) });
+      msg.className = ''; msg.textContent = `queue แล้ว (job #${job.id})`;
+      loadJobs();
+    } catch (err) { msg.className = 'error'; msg.textContent = `${err.code}: ${err.message}`; }
+  });
+
+  document.getElementById('runBtn').addEventListener('click', async () => {
+    const msg = document.getElementById('runMsg');
+    try {
+      const summary = await api('/api/v1/automation/run', { method: 'POST', body: JSON.stringify({ limit: 20 }) });
+      msg.className = '';
+      msg.textContent = `claimed ${summary.claimed} · completed ${summary.completed} · failed ${summary.failed}`;
+      loadJobs();
+    } catch (err) { msg.className = 'error'; msg.textContent = `${err.code}: ${err.message}`; }
+  });
+
+  document.getElementById('filterForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const q = new URLSearchParams();
+    for (const [k, v] of new FormData(e.target).entries()) if (v !== '') q.set(k, v);
+    loadJobs(q.toString());
+  });
+})();
+
+async function loadJobs(query = '') {
+  const jobs = await api('/api/v1/automation/jobs' + (query ? '?' + query : ''));
+  document.getElementById('jobs').innerHTML = jobs.length
+    ? '<table><tr><th>#</th><th>Type</th><th>Status</th><th>Attempts</th><th>Project</th><th>Scheduled</th><th>Error</th><th></th></tr>' +
+      jobs.map(j => `<tr>
+        <td>#${j.id}</td><td>${badge(j.job_type, 'blue')}</td><td>${statusBadge(j.status)}</td>
+        <td>${j.attempts}/${j.max_attempts}</td><td>${j.project_id ? '#' + j.project_id : '-'}</td>
+        <td class="small">${esc(j.scheduled_at)}</td><td class="small error">${esc(j.last_error || '')}</td>
+        <td>${j.status === 'failed' ? `<button class="btn" onclick="retry(${j.id})">Retry</button>` : ''}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ไม่มี job</span>';
+}
+
+async function retry(id) {
+  try {
+    await api(`/api/v1/automation/jobs/${id}/retry`, { method: 'POST' });
+    loadJobs();
+  } catch (err) { alert(`${err.code}: ${err.message}`); }
+}
+</script>
+</body>
+</html>

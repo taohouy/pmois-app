@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PMOIS v2 — Governance</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="container">
+  <h1>PMO Governance</h1>
+  <p class="muted small">Templates · Versioning (draft → published → superseded) · Policies · Working Instructions</p>
+
+  <div class="grid cols-3" style="margin-top:12px">
+    <div class="card"><h3>New Template / Policy</h3>
+      <form id="createForm">
+        <label>Code *</label><input name="code" required placeholder="GOV-REVIEW-001">
+        <label>Title *</label><input name="title" required>
+        <label>Category *</label>
+        <select name="category"><option value="policy">Policy</option><option value="standard">Standard</option><option value="framework">Framework</option><option value="guideline">Guideline</option></select>
+        <label>Audience (working instructions)</label>
+        <select name="audience"><option value="">—</option><option value="cto">CTO</option><option value="dev">Dev</option><option value="all">All</option><option value="pmo">PMO</option></select>
+        <label>Policy Type (category=Policy เท่านั้น)</label>
+        <select name="policy_type"><option value="">—</option><option value="review">Review</option><option value="delivery">Delivery</option><option value="approval">Approval</option></select>
+        <label>Description</label><textarea name="description"></textarea>
+        <button class="btn primary">Create</button>
+      </form>
+      <p id="createMsg" class="hidden"></p>
+    </div>
+
+    <div class="card" style="grid-column: span 2"><h3>Governance Records</h3>
+      <form class="inline" id="filterForm">
+        <div><label>Audience</label>
+          <select name="audience"><option value="">ทั้งหมด</option><option value="cto">CTO</option><option value="dev">Dev</option><option value="all">All</option><option value="pmo">PMO</option></select></div>
+        <div><label>Policy Type</label>
+          <select name="policy_type"><option value="">ทั้งหมด</option><option value="review">Review</option><option value="delivery">Delivery</option><option value="approval">Approval</option></select></div>
+        <div><label>Category</label>
+          <select name="category"><option value="">ทั้งหมด</option><option value="policy">Policy</option><option value="standard">Standard</option><option value="framework">Framework</option><option value="guideline">Guideline</option></select></div>
+        <button class="btn">Filter</button>
+      </form>
+      <div id="records" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px"><h3>Versions (เลือก record จากตารางด้านบน)</h3>
+    <p class="muted small" id="selectedRecord">ยังไม่ได้เลือก record</p>
+    <form class="inline" id="versionForm">
+      <div><label>Version Label</label><input name="version_label" placeholder="1.0"></div>
+      <div style="flex:3"><label>Content</label><textarea name="content"></textarea></div>
+      <button class="btn primary">Create Draft</button>
+    </form>
+    <p class="muted small">Auto-supersede: publish version ใหม่จะ supersede published เดิมในธุรกรรมเดียว — project ที่ adopt version เดิมไว้จะไม่ถูกกระทบ</p>
+    <div id="versions"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+topbar('governance');
+let selectedRecordId = null;
+
+(async () => {
+  await requireSession();
+  await loadRecords();
+
+  document.getElementById('createForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {};
+    for (const [k, v] of new FormData(e.target).entries()) if (v !== '') body[k] = v;
+    const msg = document.getElementById('createMsg');
+    try {
+      await api('/api/v1/governance-records', { method: 'POST', body: JSON.stringify(body) });
+      msg.className = ''; msg.textContent = 'สร้างสำเร็จ (status: draft)';
+      e.target.reset(); loadRecords();
+    } catch (err) { msg.className = 'error'; msg.textContent = `${err.code}: ${err.message}`; }
+  });
+
+  document.getElementById('filterForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const q = new URLSearchParams();
+    for (const [k, v] of new FormData(e.target).entries()) if (v !== '') q.set(k, v);
+    loadRecords(q.toString());
+  });
+
+  document.getElementById('versionForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!selectedRecordId) { alert('เลือก record ก่อน'); return; }
+    const fd = new FormData(e.target);
+    try {
+      await api(`/api/v1/governance-records/${selectedRecordId}/versions`, {
+        method: 'POST',
+        body: JSON.stringify({ version_label: fd.get('version_label'), content: fd.get('content') || '' })
+      });
+      e.target.reset(); loadVersions();
+    } catch (err) { alert(`${err.code}: ${err.message}`); }
+  });
+})();
+
+async function loadRecords(query = '') {
+  const records = await api('/api/v1/governance-records' + (query ? '?' + query : ''));
+  document.getElementById('records').innerHTML = records.length
+    ? '<table><tr><th>Code</th><th>Title</th><th>Category</th><th>Audience</th><th>Policy</th><th>Status</th><th></th></tr>' +
+      records.map(r => `<tr>
+        <td>${esc(r.code)}</td><td>${esc(r.title)}</td><td>${badge(r.category, 'blue')}</td>
+        <td>${r.audience ? badge(r.audience, 'gray') : '-'}</td><td>${r.policy_type ? badge(r.policy_type, 'yellow') : '-'}</td>
+        <td>${statusBadge(r.status)}</td>
+        <td><button class="btn" onclick="selectRecord(${r.id}, '${esc(r.code)}')">Versions</button></td></tr>`).join('') + '</table>'
+    : '<span class="muted">ไม่มี governance record</span>';
+}
+
+async function selectRecord(id, code) {
+  selectedRecordId = id;
+  document.getElementById('selectedRecord').textContent = `Record: ${code} (#${id})`;
+  loadVersions();
+}
+
+async function loadVersions() {
+  if (!selectedRecordId) return;
+  const versions = await api(`/api/v1/governance-records/${selectedRecordId}/versions`);
+  document.getElementById('versions').innerHTML = versions.length
+    ? '<table><tr><th>Version</th><th>Status</th><th>Published</th><th></th></tr>' +
+      versions.map(v => `<tr><td>${esc(v.version_label)}</td><td>${statusBadge(v.status)}</td><td>${esc(v.published_at || '-')}</td>
+        <td>${v.status === 'draft' ? `<button class="btn primary" onclick="publish(${v.id})">Publish</button>` : ''}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ยังไม่มี version</span>';
+}
+
+async function publish(versionId) {
+  try {
+    await api(`/api/v1/governance-versions/${versionId}/publish`, { method: 'PUT' });
+    loadVersions();
+  } catch (err) { alert(`${err.code}: ${err.message}`); }
+}
+</script>
+</body>
+</html>

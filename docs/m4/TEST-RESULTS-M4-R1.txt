@@ -1,0 +1,28 @@
+PMOIS v2 — M4 Implementation Revision 1 — Test Results
+Run date: 2026-09-05 23:07:11
+Environment: PHP 8.1.0 (CLI), MySQL 5.7.36 (temporary local instance, port 3307)
+Database: pmois_test (migrations 0001-0060; 0060 = governance audience + policy_type)
+
+=== Full Suite (M1 R2 + M2 + M3 + M4) ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+...............................................................  63 / 143 ( 44%)
+............................................................... 126 / 143 ( 88%)
+.................                                               143 / 143 (100%)
+
+Time: 00:01.660, Memory: 12.00 MB
+
+OK (143 tests, 340 assertions)
+
+=== M4 Governance focus ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+.......                                                             7 / 7 (100%)
+
+Time: 00:00.058, Memory: 8.00 MB
+
+OK (7 tests, 22 assertions)

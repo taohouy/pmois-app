@@ -1,0 +1,4 @@
+.env
+.phpunit.result.cache
+.tmp-mysql/
+PMOIS_v2_*.zip

@@ -73,7 +73,8 @@ final class AuditTrailTest extends TestCase
         $this->assertNotFalse($row, 'audit_trails ต้องมีแถวที่บันทึกไว้');
         $this->assertSame($this->workspaceId, (int) $row['workspace_id'], 'workspace_id ต้องตรงกับ context ที่ Repository ถูกสร้างมา');
         $this->assertSame('create', $row['action']);
-        $this->assertSame('{"code":"TEST"}', $row['after_value']);
+        // เทียบแบบ decoded — อย่าผูกกับ JSON spacing format ของ json_encode (brittle)
+        $this->assertSame(['code' => 'TEST'], json_decode((string) $row['after_value'], true));
     }
 
     public function testListByEntityFiltersWorkspaceEvenWhenEntityIdCollides(): void

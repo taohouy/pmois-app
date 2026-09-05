@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PMOIS v2 — Knowledge Center</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="container">
+  <h1>Knowledge Center</h1>
+  <p class="muted small">Business Rules · Known Issues · Risk Register · Future Enhancements · ADR · Knowledge Base · Timeline</p>
+
+  <div class="card" style="margin-top:12px">
+    <h3>Search (ค้นหาข้ามประเภท)</h3>
+    <form class="inline" id="searchForm">
+      <div style="flex:2"><label>Keyword</label><input name="q" placeholder="ค้นหา title/body ทุก registry" required></div>
+      <button class="btn primary">Search</button>
+    </form>
+    <div id="searchResults" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Add Knowledge Entry</h3>
+    <form class="inline" id="createForm">
+      <div><label>Type *</label>
+        <select name="entry_type">
+          <option value="business_rule">Business Rule</option>
+          <option value="known_issue">Known Issue</option>
+          <option value="risk">Risk</option>
+          <option value="future_enhancement">Future Enhancement</option>
+        </select>
+      </div>
+      <div><label>Code</label><input name="code" placeholder="BR-001 / KI-001 / RISK-001 / FE-001"></div>
+      <div style="flex:2"><label>Title *</label><input name="title" required></div>
+      <div><label>Project ID (optional)</label><input name="project_id" type="number"></div>
+      <div><label>Severity (Known Issue)</label>
+        <select name="severity"><option value="">—</option><option>low</option><option>medium</option><option>high</option><option>critical</option></select></div>
+      <div><label>Probability (Risk)</label>
+        <select name="probability"><option value="">—</option><option>low</option><option>medium</option><option>high</option></select></div>
+      <div><label>Impact (Risk)</label>
+        <select name="impact"><option value="">—</option><option>low</option><option>medium</option><option>high</option></select></div>
+      <div style="flex:2"><label>Body *</label><textarea name="body" required></textarea></div>
+      <div style="flex:2"><label>Mitigation (Risk)</label><textarea name="mitigation"></textarea></div>
+      <button class="btn primary">Add</button>
+    </form>
+    <p id="createMsg" class="hidden"></p>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Registries</h3>
+    <form class="inline" id="filterForm">
+      <div><label>Type</label>
+        <select name="entry_type">
+          <option value="">ทั้งหมด</option>
+          <option value="business_rule">Business Rule</option>
+          <option value="known_issue">Known Issue</option>
+          <option value="risk">Risk</option>
+          <option value="future_enhancement">Future Enhancement</option>
+        </select></div>
+      <div><label>Status</label>
+        <select name="status">
+          <option value="">ทั้งหมด</option>
+          <option value="active">active</option><option value="open">open</option><option value="resolved">resolved</option>
+          <option value="mitigated">mitigated</option><option value="closed">closed</option><option value="proposed">proposed</option>
+          <option value="planned">planned</option><option value="done">done</option>
+        </select></div>
+      <div><label>Project ID</label><input name="project_id" type="number"></div>
+      <button class="btn">Filter</button>
+    </form>
+    <div id="entries" style="margin-top:10px"></div>
+  </div>
+
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card"><h3>Architecture Decision Records</h3><div id="adrs"></div></div>
+    <div class="card"><h3>Knowledge Timeline</h3><div id="timeline"></div></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+topbar('knowledge');
+
+(async () => {
+  await requireSession();
+  await loadEntries();
+
+  document.getElementById('createForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {};
+    for (const [k, v] of new FormData(e.target).entries()) {
+      if (v === '') continue;
+      body[k] = (k === 'project_id' || k === 'related_revision_id') ? Number(v) : v;
+    }
+    const msg = document.getElementById('createMsg');
+    try {
+      await api('/api/v1/knowledge-entries', { method: 'POST', body: JSON.stringify(body) });
+      msg.className = ''; msg.textContent = 'บันทึกสำเร็จ';
+      e.target.reset(); loadEntries(); loadTimeline();
+    } catch (err) { msg.className = 'error'; msg.textContent = `${err.code}: ${err.message}`; }
+  });
+
+  document.getElementById('filterForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const q = new URLSearchParams();
+    for (const [k, v] of new FormData(e.target).entries()) if (v !== '') q.set(k, v);
+    loadEntries(q.toString());
+  });
+
+  document.getElementById('searchForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const q = new FormData(e.target).get('q');
+    const result = await api('/api/v1/knowledge/search?q=' + encodeURIComponent(q));
+    const total = result.entries.length + result.articles.length + result.decisions.length;
+    document.getElementById('searchResults').innerHTML = `<p class="muted">พบ ${total} รายการ</p>` +
+      (total ? '<table><tr><th>Type</th><th>Title</th><th>Project</th></tr>' +
+        [...result.entries, ...result.articles, ...result.decisions].map(r =>
+          `<tr><td>${badge(r.type, 'blue')}</td><td>${esc(r.title)}</td><td>${r.project_id ? '#' + r.project_id : '-'}</td></tr>`).join('') + '</table>' : '');
+  });
+
+  const adrs = await api('/api/v1/architecture-decisions');
+  document.getElementById('adrs').innerHTML = adrs.length
+    ? '<table><tr><th>Title</th><th>Status</th><th>Project</th></tr>' +
+      adrs.map(a => `<tr><td>${esc(a.title)}</td><td>${statusBadge(a.status)}</td><td>${a.project_id ? '#' + a.project_id : '-'}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ยังไม่มี ADR</span>';
+
+  loadTimeline();
+})();
+
+async function loadEntries(query = '') {
+  const entries = await api('/api/v1/knowledge-entries' + (query ? '?' + query : ''));
+  document.getElementById('entries').innerHTML = entries.length
+    ? '<table><tr><th>Type</th><th>Code</th><th>Title</th><th>Status</th><th>Severity</th><th>Project</th></tr>' +
+      entries.map(e => `<tr>
+        <td>${badge(e.entry_type, 'blue')}</td><td>${esc(e.code || '-')}</td><td>${esc(e.title)}</td>
+        <td>${statusBadge(e.status)}</td><td>${e.severity ? badge(e.severity, e.severity === 'critical' || e.severity === 'high' ? 'red' : 'yellow') : '-'}</td>
+        <td>${e.project_id ? '#' + e.project_id : '-'}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ไม่มีรายการ</span>';
+}
+
+async function loadTimeline() {
+  const timeline = await api('/api/v1/knowledge-timeline?limit=20');
+  document.getElementById('timeline').innerHTML = timeline.length
+    ? '<table><tr><th>When</th><th>Type</th><th>Title</th><th>Status</th></tr>' +
+      timeline.map(t => `<tr><td>${esc(t.created_at)}</td><td>${badge(t.entry_type, 'blue')}</td><td>${esc(t.title)}</td><td>${statusBadge(t.status)}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ยังไม่มีรายการ</span>';
+}
+</script>
+</body>
+</html>

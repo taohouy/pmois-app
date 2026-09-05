@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PMOIS v2 — Login</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="login-page">
+  <div class="login-card">
+    <h1>PMOIS v2</h1>
+    <p class="muted">Project Management Office Information System</p>
+    <p class="muted small">เข้าสู่ระบบด้วย LINE เท่านั้น (Fail-closed: ต้องมีคำเชิญจากผู้ดูแลก่อน)</p>
+    <button id="loginBtn" class="btn primary">Login with LINE</button>
+    <p id="error" class="error hidden"></p>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    if (params.get('error')) {
+      const el = document.getElementById('error');
+      el.textContent = 'เข้าสู่ระบบไม่สำเร็จ: ' + params.get('error');
+      el.classList.remove('hidden');
+    }
+
+    // มี session อยู่แล้ว → เข้า dashboard ทันที
+    fetch('/api/v1/dashboards/workspace', { headers: { 'Accept': 'application/json' } })
+      .then(r => { if (r.ok) location.href = '/app/dashboard.html'; });
+
+    document.getElementById('loginBtn').addEventListener('click', async () => {
+      const res = await fetch('/auth/line', { headers: { 'Accept': 'application/json' } });
+      const body = await res.json();
+      if (body.success && body.data.auth_url) {
+        location.href = body.data.auth_url;
+      } else {
+        document.getElementById('error').textContent = 'เริ่มระบบ login ไม่สำเร็จ (ตรวจ LINE config)';
+      }
+    });
+  </script>
+</body>
+</html>

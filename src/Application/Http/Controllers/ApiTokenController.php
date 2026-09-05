@@ -70,6 +70,17 @@ final class ApiTokenController
         return ApiResponse::success($response, $tokens);
     }
 
+    /** GET /api/v1/projects/{project_id}/api-tokens — M5 Project API Token Management */
+    public function listForProject(Request $request, Response $response, array $args): Response
+    {
+        $tokens = $this->tokenRepo->listByProject(
+            (int) $request->getAttribute('workspace_id'),
+            (int) $args['project_id']
+        );
+
+        return ApiResponse::success($response, $tokens);
+    }
+
     /**
      * DELETE /api/v1/auth/tokens/{id}
      * Permission: api_token.revoke

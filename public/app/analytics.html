@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PMOIS v2 — Analytics</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="container">
+  <h1>Portfolio Analytics</h1>
+
+  <div class="grid cols-4" id="kpis"></div>
+
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card"><h3>Milestone Analytics</h3><div id="milestones"></div></div>
+    <div class="card"><h3>Health Distribution</h3><div id="health"></div></div>
+  </div>
+
+  <div class="card" style="margin-top:16px"><h3>Milestones Closed — Monthly Trend</h3><div id="trend"></div></div>
+  <div class="card" style="margin-top:16px"><h3>CTO / Dev Productivity</h3><div id="productivity"></div></div>
+  <div class="card" style="margin-top:16px"><h3>At-Risk Projects (yellow/red + signals)</h3><div id="atrisk"></div></div>
+  <div class="card" style="margin-top:16px"><h3>Dependency Leaders</h3><div id="dependencies"></div></div>
+
+  <div id="portfolio-section" class="hidden" style="margin-top:24px">
+    <h2>Portfolio (All Workspaces)</h2>
+    <div id="portfolio"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+topbar('dashboard');
+
+// SVG bar chart helper (ไม่พึ่ง chart library — Configuration over Hardcode)
+function barChart(items, valueKey, labelKey, color) {
+  const max = Math.max(1, ...items.map(i => i[valueKey]));
+  return '<svg width="100%" height="' + (items.length * 28 + 8) + '">' +
+    items.map((item, i) => {
+      const w = Math.round((item[valueKey] / max) * 70) + '%';
+      const y = i * 28;
+      return `<text x="0" y="${y + 18}" font-size="12" fill="#6b7280">${esc(String(item[labelKey]))}</text>` +
+             `<rect x="30%" y="${y + 6}" width="${w}" height="16" rx="3" fill="${color}"></rect>` +
+             `<text x="${30 + parseInt(w)}%" y="${y + 18}" font-size="12" fill="#1f2937">${item[valueKey]}</text>`;
+    }).join('') + '</svg>';
+}
+
+(async () => {
+  await requireSession();
+  const k = await api('/api/v1/analytics/kpis');
+
+  document.getElementById('kpis').innerHTML = `
+    <div class="card"><h3>Projects</h3><div class="stat">${k.projects.total}</div></div>
+    <div class="card"><h3>Avg Progress</h3><div class="stat">${k.projects.avg_progress}%</div><div class="progressbar"><div style="width:${k.projects.avg_progress}%"></div></div></div>
+    <div class="card"><h3>Milestone On-Time Rate</h3><div class="stat">${k.milestone_on_time_rate_percent === null ? '–' : k.milestone_on_time_rate_percent + '%'}</div></div>
+    <div class="card"><h3>Avg Review Turnaround</h3><div class="stat">${k.avg_review_turnaround_hours === null ? '–' : k.avg_review_turnaround_hours + 'h'}</div><div class="muted small">overdue open milestones: ${k.overdue_open_milestones}</div></div>`;
+
+  const m = await api('/api/v1/analytics/milestones');
+  document.getElementById('milestones').innerHTML =
+    `<div>Total: <strong>${m.stats.total}</strong> (open ${m.stats.open} / closed ${m.stats.closed})</div>` +
+    `<div>On-time closed: <strong>${m.stats.closed_on_time}</strong> · Late: <strong>${m.stats.closed_late}</strong></div>` +
+    `<div>Overdue (open): <strong>${m.stats.overdue_open}</strong></div>`;
+
+  const h = await api('/api/v1/analytics/health');
+  document.getElementById('health').innerHTML = barChart(
+    [{ label: 'green', v: h.distribution.green }, { label: 'yellow', v: h.distribution.yellow }, { label: 'red', v: h.distribution.red }]
+      .map(x => ({ label: x.label, v: x.v })),
+    'v', 'label', '#2563eb'
+  ) + `<div class="muted small">green ${h.distribution.green} · yellow ${h.distribution.yellow} · red ${h.distribution.red}</div>`;
+
+  const trend = m.monthly_closed_trend.slice().reverse();
+  document.getElementById('trend').innerHTML = trend.length
+    ? barChart(trend.map(t => ({ label: t.month, closed: Number(t.closed) })), 'closed', 'label', '#16a34a')
+    : '<span class="muted">ยังไม่มีข้อมูล</span>';
+
+  const prod = await api('/api/v1/analytics/productivity');
+  document.getElementById('productivity').innerHTML =
+    '<h3 style="margin:8px 0 4px" class="muted small">Reviewers</h3>' +
+    (prod.reviewers.length
+      ? '<table><tr><th>Reviewer</th><th>Reviews</th><th>Avg Hours</th></tr>' +
+        prod.reviewers.map(r => `<tr><td>${esc(r.user_name)}</td><td>${r.reviews}</td><td>${r.avg_review_hours ?? '–'}</td></tr>`).join('') + '</table>'
+      : '<span class="muted">ยังไม่มีข้อมูล</span>') +
+    '<h3 style="margin:12px 0 4px" class="muted small">Developers</h3>' +
+    (prod.developers.length
+      ? '<table><tr><th>Developer</th><th>Submissions</th><th>Commits</th><th>AI-attributed</th><th>Avg Cycle (h)</th></tr>' +
+        prod.developers.map(d => `<tr><td>${esc(d.user_name || '-')}</td><td>${d.submissions}</td><td>${d.commits}</td><td>${d.ai_attributed}</td><td>${d.avg_cycle_hours ?? '–'}</td></tr>`).join('') + '</table>'
+      : '<span class="muted">ยังไม่มีข้อมูล</span>');
+
+  document.getElementById('atrisk').innerHTML = h.at_risk_projects.length
+    ? '<table><tr><th>Project</th><th>Health</th><th>Progress</th><th>Signals</th></tr>' +
+      h.at_risk_projects.map(p => `<tr><td>${esc(p.code)}</td><td>${healthBadge(p.health)}</td><td>${p.progress_percent}%</td>
+        <td class="small">overdue: ${p.signals.overdue_milestones} · critical issues: ${p.signals.critical_known_issues} · failed deploys: ${p.signals.failed_deployments}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">ไม่มีโครงการที่ต้องเฝ้าดู</span>';
+
+  const deps = await api('/api/v1/analytics/dependencies');
+  document.getElementById('dependencies').innerHTML =
+    '<h3 style="margin:8px 0 4px" class="muted small">Most depended-on</h3>' +
+    (deps.leaders.most_depended_on.length
+      ? barChart(deps.leaders.most_depended_on.map(d => ({ label: d.code, v: d.depended_on_count })), 'v', 'label', '#d97706')
+      : '<span class="muted">ไม่มีข้อมูล</span>') +
+    '<h3 style="margin:12px 0 4px" class="muted small">Most depending</h3>' +
+    (deps.leaders.most_depending.length
+      ? barChart(deps.leaders.most_depending.map(d => ({ label: d.code, v: d.depends_on_count })), 'v', 'label', '#2563eb')
+      : '<span class="muted">ไม่มีข้อมูล</span>');
+
+  // Portfolio — admin เท่านั้น
+  try {
+    const portfolio = await api('/api/v1/analytics/portfolio');
+    document.getElementById('portfolio-section').classList.remove('hidden');
+    document.getElementById('portfolio').innerHTML =
+      '<table><tr><th>Workspace</th><th>Projects</th><th>Avg Progress</th><th>AI Dev Auto</th><th>Health</th></tr>' +
+      portfolio.workspace_kpis.map(w => `<tr><td>${esc(w.name)}</td><td>${w.projects}</td><td>${w.avg_progress_percent}%</td><td>${w.ai_dev_auto_projects}</td>
+        <td>${badge('G', 'green')} ${w.health.green} ${badge('Y', 'yellow')} ${w.health.yellow} ${badge('R', 'red')} ${w.health.red}</td></tr>`).join('') + '</table>';
+  } catch (e) { /* non-admin */ }
+})();
+</script>
+</body>
+</html>

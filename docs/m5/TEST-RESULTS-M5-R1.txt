@@ -1,0 +1,28 @@
+PMOIS v2 — M5 Implementation Revision 1 — Test Results
+Run date: 2026-09-05 23:28:24
+Environment: PHP 8.1.0 (CLI), MySQL 5.7.36 (temporary local instance, port 3307)
+Database: pmois_test (migrations 0001-0061; 0061 = notifications)
+
+=== Full Suite (M1 R2 + M2 + M3 + M4 + M5) ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+...............................................................  63 / 150 ( 42%)
+............................................................... 126 / 150 ( 84%)
+........................                                        150 / 150 (100%)
+
+Time: 00:01.068, Memory: 12.00 MB
+
+OK (150 tests, 359 assertions)
+
+=== M5 API Platform focus ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+.......                                                             7 / 7 (100%)
+
+Time: 00:00.043, Memory: 8.00 MB
+
+OK (7 tests, 19 assertions)

@@ -22,6 +22,8 @@ interface ProjectRepositoryInterface
         ?int $parentProjectId = null,
         string $developmentMode = 'manual',
         ?string $abbreviation = null,
+        ?string $startDate = null,
+        ?int $sourceTemplateId = null,
     ): Project;
 
     public function updateStatus(int $id, string $status): bool;

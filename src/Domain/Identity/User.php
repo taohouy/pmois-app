@@ -12,6 +12,7 @@ final class User
         public readonly string $email,
         public readonly string $status,
         public readonly bool $isPlatformAdmin,
+        public readonly ?string $lineUserId,
         public readonly string $createdAt,
         public readonly string $updatedAt,
     ) {
@@ -28,6 +29,7 @@ final class User
             email: (string) $row['email'],
             status: (string) $row['status'],
             isPlatformAdmin: (bool) $row['is_platform_admin'],
+            lineUserId: isset($row['line_user_id']) && $row['line_user_id'] !== null ? (string) $row['line_user_id'] : null,
             createdAt: (string) $row['created_at'],
             updatedAt: (string) $row['updated_at'],
         );

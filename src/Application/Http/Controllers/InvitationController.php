@@ -8,38 +8,40 @@ use App\Application\Http\Responders\ApiResponse;
 use App\Domain\Auth\InvitationService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
-use Psr\Http\Server\RequestHandlerInterface as RequestHandler;
 
-final class InvitationController implements RequestHandler
+/**
+ * Invitation (admin) — สร้าง placeholder user + active membership + claim token
+ * Permission: workspace.create (is_platform_admin เท่านั้น ตาม PermissionResolver rule 1)
+ */
+final class InvitationController
 {
-    public function __construct(private readonly \App\Domain\Auth\InvitationService $invitationService)
+    public function __construct(private readonly InvitationService $invitationService)
     {
     }
 
-    public function handle(\Psr\Http\Message\ServerRequestInterface $request): \Psr\Http\Message\ResponseInterface
+    public function create(Request $request, Response $response): Response
     {
-        $method = $request->getMethod();
+        $body = (array) $request->getParsedBody();
 
-        if ($method === 'POST') {
-            // Create invitation
-            $data = $request->getParsedBody();
-            $token = $this->invitationService->createInvitation(
-                (int) ($data['workspace_id'] ?? 0),
-                (int) ($data['project_id'] ?? 0),
-                $request->getAttribute('user_id'),
-                $data['role_code'] ?? 'MEMBER',
-                $request->getAttribute('user_id')
-            );
-
-            return ApiResponse::success(['claim_url' => $this->generateClaimUrl($token)], 'Invitation created');
+        foreach (['workspace_id', 'project_id'] as $required) {
+            if (empty($body[$required])) {
+                return ApiResponse::error($response, 'VALIDATION_ERROR', "{$required} is required", [], 422);
+            }
         }
 
-        return ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', [], 405);
-    }
+        $actorId = (int) $request->getAttribute('user_id');
 
-    private function generateClaimUrl(string $token): string
-    {
-        // In production, this would be a proper frontend URL
-        return '/claim/' . $token;
+        $token = $this->invitationService->createInvitation(
+            (int) $body['workspace_id'],
+            (int) $body['project_id'],
+            $actorId,
+            (string) ($body['role_code'] ?? 'MEMBER'),
+            $actorId
+        );
+
+        $auditContext = $request->getAttribute('audit_context');
+        $auditContext?->record(entityType: 'invitation', entityId: $actorId, afterValue: ['workspace_id' => (int) $body['workspace_id']], action: 'invitation_created');
+
+        return ApiResponse::success($response, ['claim_url' => '/claim/' . $token], [], 201);
     }
 }

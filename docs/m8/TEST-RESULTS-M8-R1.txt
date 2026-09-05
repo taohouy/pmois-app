@@ -1,0 +1,28 @@
+PMOIS v2 — M8 Implementation Revision 1 — Test Results
+Run date: 2026-09-06 00:45:50
+Environment: PHP 8.1.0 (CLI), MySQL 5.7.36 (temporary local instance, port 3307)
+Database: pmois_test (migrations 0001-0064; 0063 = automation_jobs, 0064 = automation permission codes)
+
+=== Full Suite (M1-M8) ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+...............................................................  63 / 177 ( 35%)
+............................................................... 126 / 177 ( 71%)
+...................................................             177 / 177 (100%)
+
+Time: 00:01.310, Memory: 14.00 MB
+
+OK (177 tests, 433 assertions)
+
+=== M8 Automation focus ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+..........                                                        10 / 10 (100%)
+
+Time: 00:00.098, Memory: 8.00 MB
+
+OK (10 tests, 27 assertions)

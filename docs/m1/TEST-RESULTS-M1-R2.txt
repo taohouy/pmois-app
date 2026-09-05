@@ -1,0 +1,38 @@
+PMOIS v2 — M1 Implementation Revision 2 — Test Results
+Run date: 2026-09-05 22:10:40
+Environment: PHP 8.1.0 (CLI), MySQL 5.7.36 (temporary local instance, port 3307)
+Database: pmois_test (migrations 0001-0058 applied; 0056-0058 rollback+re-apply verified)
+
+=== Full Suite ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+...............................................................  63 / 110 ( 57%)
+...............................................                 110 / 110 (100%)
+
+Time: 00:00.835, Memory: 12.00 MB
+
+OK (110 tests, 225 assertions)
+
+=== CTO Review focus: LINE Authentication (§1) ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+..................                                                18 / 18 (100%)
+
+Time: 00:00.113, Memory: 8.00 MB
+
+OK (18 tests, 43 assertions)
+
+=== CTO Review focus: Project Creation Atomicity (§2) ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+......                                                              6 / 6 (100%)
+
+Time: 00:00.048, Memory: 8.00 MB
+
+OK (6 tests, 20 assertions)
