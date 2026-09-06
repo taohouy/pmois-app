@@ -35,11 +35,19 @@ $app = AppFactory::create();
 // ที่นี่เหลือแค่ middleware ที่ "ต้องการครอบทุก route แบบไม่มีข้อยกเว้นจริงๆ" เท่านั้น
 
 $app->addBodyParsingMiddleware();
+
+// ===== M9 UAT Runtime Fix: Generic error handling =====
+// AppErrorMiddleware (outermost) จับทุก exception/404 → generic page (browser) หรือ
+// generic JSON (API) เท่านั้น — stack trace/source path/internal exception บันทึกลง
+// server log ผ่าน error_log() เท่านั้น; APP_DEBUG=true = dev mode แสดง details
 $app->addErrorMiddleware(
-    (bool) ($GLOBALS['app_env']['APP_DEBUG'] ?? false),
+    false, // displayErrorDetails=false เสมอ — ควบคุมผ่าน AppErrorMiddleware
     true,
     true
 );
+$app->add(new \App\Application\Http\AppErrorMiddleware(
+    (bool) ($GLOBALS['app_env']['APP_DEBUG'] ?? false)
+));
 
 // ===== Routes (รวม middleware ผูกกับ group แล้วในไฟล์นี้) =====
 (require __DIR__ . '/../src/Config/routes.php')($app, $container);

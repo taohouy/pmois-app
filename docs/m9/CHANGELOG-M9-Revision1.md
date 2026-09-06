@@ -40,3 +40,17 @@
 
 - Consolidated installer: เรียง admin seed **ก่อน** migration 0043 (seed providers ต้องการ admin)
 - Database Rollback: สร้างจาก installed schema แทน hardcode (จับ table ที่ลืม — git_providers)
+
+---
+
+## 5. UAT Runtime Fix Revision 1 (2026-09-06 — จาก CEO UAT Defect Report)
+
+| Issue | Fix |
+|---|---|
+| 1. `/auth/line` ตอบ JSON ให้ browser | Web route ตอบ **302 → LINE Authorization** ทันที (พร้อม state/fingerprint cookie) |
+| 2. `GET /` ตอบ 404 | Root route ใหม่: ไม่ login → 302 `/auth/line`; login แล้ว (valid session) → 302 dashboard |
+| 3. แยก Web/API routes | Web: `/auth/line`, `/auth/line/callback`, `/claim/{token}` (302 ทั้งหมด); API: `/api/v1/auth/line`, `/api/v1/auth/line/callback` (JSON) |
+| 4. Production error handling | `AppErrorMiddleware` (outermost): APP_DEBUG=false → generic 404/500 (HTML/JSON ตาม Accept) ไม่มี stack trace/source path/internal message; details log server-side ผ่าน error_log; APP_DEBUG=true = dev mode rethrow |
+
+**Tests:** `HttpRuntimeTest` (12 เคส) — root before/after login, web 302, API JSON, callback success → session cookie, fail → login?error=, generic 404/500 ไม่มี internals, debug mode rethrow
+**Full Suite:** 187 tests / 465 assertions — OK (`TEST-RESULTS-UAT-RUNTIME-FIX-1.txt`)

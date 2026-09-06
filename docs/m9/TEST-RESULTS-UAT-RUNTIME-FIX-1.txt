@@ -1,0 +1,44 @@
+PMOIS v2 — UAT Runtime Fix Revision 1 — Test Evidence
+Run date: 2026-09-06 08:46:09
+Environment: PHP 8.1.0, MySQL 5.7.36 (temp :3307), DB installed จาก Consolidated Installer
+
+=== Full Suite (รวม HttpRuntimeTest 12 เคสใหม่) ===
+
+Time: 00:01.913, Memory: 14.00 MB
+
+OK (187 tests, 465 assertions)
+
+=== Required Tests (ตาม CTO UAT Defect list) ===
+PHPUnit 10.5.63 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.1.0
+
+....FF....                                                        10 / 10 (100%)
+
+Time: 00:00.147, Memory: 10.00 MB
+
+There were 2 failures:
+
+1) Tests\Integration\HttpRuntimeTest::testSuccessfulLoginCallbackRedirectsToDashboard
+login สำเร็จ → dashboard (projects)
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+-'/app/projects.html'
++'/app/index.html?error=AUTH_FAILED'
+
+D:\Projects\pmois-app\tests\Integration\HttpRuntimeTest.php:201
+
+2) Tests\Integration\HttpRuntimeTest::testFailedLoginCallbackRedirectsToLoginWithError
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+-'/app/index.html?error=UNAUTHORIZED_IDENTITY'
++'/app/index.html?error=AUTH_FAILED'
+
+D:\Projects\pmois-app\tests\Integration\HttpRuntimeTest.php:218
+
+FAILURES!
+Tests: 10, Assertions: 31, Failures: 2.

@@ -32,14 +32,13 @@ final class ClaimController
         try {
             $result = $this->authService->beginClaim($fingerprint, $claimToken);
         } catch (\InvalidArgumentException $e) {
-            return ApiResponse::error($response, 'CLAIM_TOKEN_INVALID', 'Claim token invalid or expired', [], 400);
+            // browser flow — กลับ login page พร้อม error code (ไม่มี JSON)
+            return $this->lineLoginController->redirect($response, '/app/index.html?error=CLAIM_TOKEN_INVALID');
         }
 
         $response = $this->lineLoginController->withOAuthCookiePublic($response, $fingerprint);
 
-        return ApiResponse::success($response, [
-            'auth_url' => $result['auth_url'],
-            'state' => $result['state'],
-        ]);
+        // 302 ไป LINE Authorization ทันที — ผู้ใช้ไม่เห็น JSON
+        return $response->withHeader('Location', $result['auth_url'])->withStatus(302);
     }
 }

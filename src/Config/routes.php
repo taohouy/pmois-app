@@ -481,15 +481,15 @@ return function (App $app, ContainerInterface $container): void {
         ->add(ProjectScopeMiddleware::class)
         ->add(new AuthTokenMiddleware($container->get(PDO::class), $container));
 
-    // ===== LINE Login (guest — ไม่ผ่าน AuthTokenMiddleware เพราะยังไม่มี token/session) =====
-    // M1 R2 (CTO Review §1): state persisted one-time + fingerprint cookie binding,
-    // id_token verified, callback สร้าง PMOIS session (HttpOnly cookie)
+    // ===== M9 UAT Runtime Fix: Web routes (browser — 302) แยกจาก API routes (JSON) =====
+    $app->get('/', LineLoginController::class . ':root');
     $app->get('/auth/line', LineLoginController::class . ':redirect');
     $app->get('/auth/line/callback', LineLoginController::class . ':callback');
     $app->get('/auth/error', LineLoginController::class . ':error');
     $app->post('/auth/logout', LineLoginController::class . ':logout');
-
-    // ===== Claim (guest) — M1 R2: GET เท่านั้น = เริ่ม claim ผ่าน LINE Login;
-    // binding เกิดที่ callback ด้วย verified sub เท่านั้น (ไม่มี POST รับ line_user_id จาก client)
     $app->get('/claim/{token}', ClaimController::class . ':start');
+
+    // ===== API auth (JSON — สำหรับ API clients) =====
+    $app->get('/api/v1/auth/line', LineLoginController::class . ':apiRedirect');
+    $app->get('/api/v1/auth/line/callback', LineLoginController::class . ':apiCallback');
 };

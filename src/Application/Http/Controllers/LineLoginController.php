@@ -12,12 +12,21 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 /**
  * LINE Login — ระบบรองรับ LINE เท่านั้น (CTO Constraint #1)
  *
- * Security (CTO Review §1):
- *  - state: cryptographically secure, persisted (one-time), bound to browser fingerprint cookie,
- *    verified + marked used ที่ callback
- *  - id_token: verified ผ่าน LINE verify endpoint + iss/aud/exp/iat/nonce checks
- *  - callback สร้าง authenticated PMOIS session (HttpOnly cookie) — fail-closed
- *    หากไม่มี bound user / inactive / ไม่มี active membership
+ * M9 UAT Runtime Fix — แยก Web routes และ API routes ชัดเจน:
+ *
+ *   Web (browser — 302 redirects, ผู้ใช้ไม่เห็น JSON):
+ *     GET /                      → ไม่ login: 302 /auth/line ; login แล้ว: 302 dashboard
+ *     GET /auth/line             → 302 LINE Authorization URL ทันที
+ *     GET /auth/line/callback    → verify + session → 302 dashboard (fail → 302 login?error=)
+ *     GET /auth/error            → 302 login page with error
+ *     POST /auth/logout          → revoke session + 302 login
+ *
+ *   API (JSON — สำหรับ API clients):
+ *     GET /api/v1/auth/line           → JSON {auth_url, state}
+ *     GET /api/v1/auth/line/callback  → JSON (session cookie เดียวกัน)
+ *
+ * Security (M1 R2 เดิมคงไว้): state one-time + fingerprint cookie + verified ID token
+ * + fail-closed PMOIS session
  */
 final class LineLoginController
 {
@@ -28,7 +37,82 @@ final class LineLoginController
     {
     }
 
+    // ===== Root (M9 UAT Fix Issue 2) =====
+
+    /** GET / — ไม่ login → /auth/line ; login แล้ว → dashboard ; ไม่มี 404 */
+    public function root(Request $request, Response $response): Response
+    {
+        $sessionToken = $this->getCookie($request, self::SESSION_COOKIE);
+
+        if ($sessionToken !== null && $this->authService->resolveSession($sessionToken) !== null) {
+            return $this->redirectTo($response, '/app/dashboard.html');
+        }
+
+        return $this->redirectTo($response, '/auth/line');
+    }
+
+    // ===== Web (browser) — 302 redirects =====
+
+    /** GET /auth/line → 302 LINE Authorization URL ทันที (ไม่มี JSON) */
     public function redirect(Request $request, Response $response): Response
+    {
+        $fingerprint = bin2hex(random_bytes(32));
+
+        $result = $this->authService->beginLogin($fingerprint);
+
+        return $this->withOAuthCookie($response, $fingerprint)
+            ->withHeader('Location', $result['auth_url'])
+            ->withStatus(302);
+    }
+
+    /** GET /auth/line/callback — browser flow: verify → session → 302 dashboard (fail → 302 login?error=) */
+    public function callback(Request $request, Response $response): Response
+    {
+        $queryParams = $request->getQueryParams();
+        $state = (string) ($queryParams['state'] ?? '');
+        $code = (string) ($queryParams['code'] ?? '');
+        $fingerprint = (string) $this->getCookie($request, self::OAUTH_COOKIE);
+
+        if ($state === '' || $code === '') {
+            return $this->redirectTo($response, '/app/index.html?error=STATE_INVALID');
+        }
+
+        try {
+            $result = $this->authService->completeCallback($state, $code, $fingerprint);
+        } catch (\Throwable $e) {
+            // ทุกความล้มเหลว (state/token/identity) → กลับ login page พร้อม error code — ไม่มี internals
+            return $this->redirectTo($response, '/app/index.html?error=' . urlencode($this->safeErrorCode($e)));
+        }
+
+        $response = $this->withSessionCookie($response, $result['session_token']);
+        $response = $this->withExpiredCookie($response, self::OAUTH_COOKIE);
+
+        return $this->redirectTo($response, '/app/projects.html');
+    }
+
+    /** GET /auth/error → 302 login page (fail-closed page ไม่พึ่ง session) */
+    public function error(Request $request, Response $response): Response
+    {
+        return $this->redirectTo($response, '/app/index.html?error=UNAUTHORIZED');
+    }
+
+    /** POST /auth/logout — revoke session แล้ว 302 login */
+    public function logout(Request $request, Response $response): Response
+    {
+        $sessionToken = $this->getCookie($request, self::SESSION_COOKIE);
+        if ($sessionToken !== null) {
+            $this->authService->logout($sessionToken);
+        }
+
+        return $this->withExpiredCookie($response, self::SESSION_COOKIE)
+            ->withHeader('Location', '/app/index.html')
+            ->withStatus(302);
+    }
+
+    // ===== API (JSON) — /api/v1/auth/* =====
+
+    /** GET /api/v1/auth/line — JSON {auth_url, state} สำหรับ API clients */
+    public function apiRedirect(Request $request, Response $response): Response
     {
         $fingerprint = bin2hex(random_bytes(32));
 
@@ -42,44 +126,30 @@ final class LineLoginController
         ]);
     }
 
-    public function callback(Request $request, Response $response): Response
+    /** GET /api/v1/auth/line/callback?code=&state= — JSON flow สำหรับ API clients */
+    public function apiCallback(Request $request, Response $response): Response
     {
         $queryParams = $request->getQueryParams();
         $state = (string) ($queryParams['state'] ?? '');
         $code = (string) ($queryParams['code'] ?? '');
         $fingerprint = (string) $this->getCookie($request, self::OAUTH_COOKIE);
-        $wantsHtml = $this->wantsHtml($request);
 
         if ($state === '' || $code === '') {
-            return $wantsHtml
-                ? $this->redirectApp($response, '/app/index.html?error=STATE_INVALID')
-                : ApiResponse::error($response, 'STATE_INVALID', 'Missing state or authorization code', [], 401);
+            return ApiResponse::error($response, 'STATE_INVALID', 'Missing state or authorization code', [], 401);
         }
 
         try {
             $result = $this->authService->completeCallback($state, $code, $fingerprint);
         } catch (\DomainException $e) {
-            return $wantsHtml
-                ? $this->redirectApp($response, '/app/index.html?error=' . $e->getMessage())
-                : $this->authError($response, $e->getMessage());
+            return ApiResponse::error($response, $e->getMessage(), $this->errorMessage($e->getMessage()), [], $this->errorStatus($e->getMessage()));
         } catch (\InvalidArgumentException $e) {
-            return $wantsHtml
-                ? $this->redirectApp($response, '/app/index.html?error=ID_TOKEN_INVALID')
-                : $this->authError($response, $e->getMessage());
+            return ApiResponse::error($response, 'ID_TOKEN_INVALID', 'LINE ID token failed verification', [], 401);
         } catch (\RuntimeException $e) {
-            return $wantsHtml
-                ? $this->redirectApp($response, '/app/index.html?error=OAUTH_EXCHANGE_FAILED')
-                : $this->authError($response, $e->getMessage());
+            return ApiResponse::error($response, 'OAUTH_EXCHANGE_FAILED', 'Authorization code exchange failed', [], 401);
         }
 
-        // authenticated PMOIS session (HttpOnly cookie) + เคลียร์ oauth fingerprint cookie
         $response = $this->withSessionCookie($response, $result['session_token']);
         $response = $this->withExpiredCookie($response, self::OAUTH_COOKIE);
-
-        // Web UI: browser navigation → redirect เข้า app (session cookie พร้อมใช้)
-        if ($wantsHtml) {
-            return $this->redirectApp($response, '/app/projects.html');
-        }
 
         return ApiResponse::success($response, [
             'user_id' => $result['user_id'],
@@ -90,43 +160,11 @@ final class LineLoginController
         ]);
     }
 
-    public function error(Request $request, Response $response): Response
-    {
-        return ApiResponse::error($response, 'UNAUTHORIZED', 'LINE user has no active workspace membership', [], 403);
-    }
-
-    public function logout(Request $request, Response $response): Response
-    {
-        $sessionToken = (string) $this->getCookie($request, self::SESSION_COOKIE);
-        if ($sessionToken !== '') {
-            $this->authService->logout($sessionToken);
-        }
-
-        $response = $this->withExpiredCookie($response, self::SESSION_COOKIE);
-
-        return ApiResponse::success($response, ['logged_out' => true]);
-    }
-
     // ===== helpers =====
 
-    /** browser navigation (Accept: text/html) → redirect; API client → JSON (backward compatible) */
-    private function wantsHtml(Request $request): bool
+    private function errorMessage(string $code): string
     {
-        return str_contains($request->getHeaderLine('Accept'), 'text/html');
-    }
-
-    private function redirectApp(Response $response, string $path): Response
-    {
-        return $response->withHeader('Location', $path)->withStatus(302);
-    }
-
-    private function authError(Response $response, string $code): Response
-    {
-        // state/identity failures = 401 (หรือ 403 เมื่อเป็นสิทธิ์) — fail-closed เสมอ
-        $permissionCodes = ['UNAUTHORIZED_IDENTITY'];
-        $status = in_array($code, $permissionCodes, true) ? 403 : 401;
-
-        $message = match ($code) {
+        return match ($code) {
             'STATE_INVALID' => 'OAuth state missing or unknown',
             'STATE_EXPIRED' => 'OAuth state expired',
             'STATE_MISMATCH' => 'OAuth state does not match this browser',
@@ -139,8 +177,27 @@ final class LineLoginController
             'LINE_ALREADY_BOUND' => 'This LINE account is already bound to another PMOIS user',
             default => 'Authentication failed',
         };
+    }
 
-        return ApiResponse::error($response, $code, $message, [], $status);
+    private function errorStatus(string $code): int
+    {
+        return $code === 'UNAUTHORIZED_IDENTITY' ? 403 : 401;
+    }
+
+    private function safeErrorCode(\Throwable $e): string
+    {
+        $message = $e->getMessage();
+        // แสดงเฉพาะ error code ที่ระบบกำหนด — ห้าม leak internals
+        $allowed = ['STATE_INVALID', 'STATE_EXPIRED', 'STATE_MISMATCH', 'STATE_REUSED',
+            'ID_TOKEN_INVALID', 'OAUTH_EXCHANGE_FAILED', 'UNAUTHORIZED_IDENTITY',
+            'CLAIM_TOKEN_INVALID', 'CLAIM_ALREADY_USED', 'LINE_ALREADY_BOUND'];
+
+        return in_array($message, $allowed, true) ? $message : 'AUTH_FAILED';
+    }
+
+    private function redirectTo(Response $response, string $location): Response
+    {
+        return $response->withHeader('Location', $location)->withStatus(302);
     }
 
     private function getCookie(Request $request, string $name): ?string
