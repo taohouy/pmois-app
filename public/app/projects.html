@@ -11,66 +11,70 @@
   <h1>Projects</h1>
 
   <div class="card" style="margin-bottom:16px">
-    <h3>Create Project (CEO — กรอกน้อยที่สุด)</h3>
-    <form id="createForm" class="inline">
-      <div><label>Name *</label><input name="name" required></div>
-      <div><label>Code *</label><input name="code" required placeholder="MAR-00100"></div>
-      <div><label>CTO User ID</label><input name="cto_user_id" type="number" placeholder="default จาก workspace"></div>
-      <div><label>Dev User ID</label><input name="dev_user_id" type="number" placeholder="default จาก workspace"></div>
-      <div><label>Mode</label>
-        <select name="development_mode">
-          <option value="">default</option>
-          <option value="manual">Manual</option>
-          <option value="ai_assisted">AI Assisted</option>
-          <option value="ai_dev_auto">AI Dev Auto</option>
-        </select>
-      </div>
-      <button class="btn primary">Create</button>
-    </form>
-    <p id="createMsg" class="hidden"></p>
+    <button class="btn secondary" id="addWorkspaceBtn">+ เพิ่ม Workspace</button>
   </div>
 
-  <div id="list"></div>
+  <div id="workspaceList"></div>
+
+  <button class="btn secondary" id="addProjectBtn" style="margin-top:8px">+ เพิ่ม Project</button>
+
+  <div id="projectList"></div>
 </div>
 
 <script src="app.js"></script>
 <script>
 topbar('projects');
 
-(async () => {
-  await requireSession();
-  await loadProjects();
+/* ===== SweetAlert2 Config ===== */
+const Swal = window.Swal || Swal;
 
-  document.getElementById('createForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    const body = {};
-    for (const [k, v] of fd.entries()) if (v !== '') body[k] = Number.isNaN(Number(v)) || k === 'name' || k === 'code' ? v : Number(v);
-
-    const msg = document.getElementById('createMsg');
-    try {
-      const created = await api('/api/v1/projects', { method: 'POST', body: JSON.stringify(body) });
-      msg.className = '';
-      msg.textContent = `สร้างโครงการ #${created.id} สำเร็จ (completeness ${created.profile_completeness_percent}%)` +
-        (created.project_token ? ' — Project Token (แสดงครั้งเดียว): ' + created.project_token : '');
-      e.target.reset();
-      loadProjects();
-    } catch (err) {
-      msg.className = 'error';
-      msg.textContent = `${err.code}: ${err.message}`;
-    }
+/* ===== API Helper ===== */
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: { 'Accept': 'application/json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
+    ...opts,
   });
+  const body = await res.json().catch(() => ({ success: false, error: { code: 'BAD_JSON', message: 'invalid response' } }));
+  if (!res.ok || body.success === false) {
+    if (res.status === 401) { location.href = '/app/index.html'; throw new Error('unauthorized'); }
+    const err = new Error(body.error ? body.error.message : 'request failed');
+    err.code = body.error ? body.error.code : 'UNKNOWN';
+    err.status = res.status;
+    throw err;
+  }
+  return body.data;
+}
+
+async function requireSession() {
+  try { await api('/api/v1/dashboards/workspace'); } catch (e) { location.href = '/app/index.html'; throw e; }
+}
+
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": " " }[c]));
+}
+
+function badge(text, kind) { return `<span class="badge ${kind}">${esc(text)}</span>`; }
+function healthBadge(h) { return badge(h, h === 'green' ? 'green' : h === 'yellow' ? 'yellow' : 'red'); }
+function statusBadge(s) {
+  const map = { active: 'green', planning: 'blue', on_hold: 'yellow', closed: 'gray', submitted: 'blue', cto_approved: 'green', cto_rejected: 'red', committed: 'green' };
+  return badge(s.replaceAll('_', ' '), map[s] || 'gray');
+}
+
+/* ===== SweetAlert2 CDN ===== */
+(function() {
+  const script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/npm/sweetalert2@11';
+  script.integrity = 'sha384-pQQkDk69Z6G+5jZRR+k6xjz0Q+5c6cLHuetTZNell';
+  script.crossOrigin = 'anonymous';
+  script.onload = () => { /* SweetAlert2 loaded */ };
+  document.head.appendChild(script);
 })();
 
-async function loadProjects() {
-  const projects = await api('/api/v1/projects');
-  document.getElementById('list').innerHTML = projects.length
-    ? '<table><tr><th>ID</th><th>Code</th><th>Name</th><th>Status</th><th></th></tr>' +
-      projects.map(p => `<tr>
-        <td>${p.id}</td><td>${esc(p.code)}</td><td>${esc(p.name)}</td><td>${statusBadge(p.status)}</td>
-        <td><a class="btn" href="/app/project.html?id=${p.id}">Open</a></td></tr>`).join('') + '</table>'
-    : '<span class="muted">ยังไม่มีโครงการ</span>';
-}
+/* ===== Init on Load ===== */
+(async () => {
+  await requireSession();
+  await loadWorkspaces();
+  await loadProjects();
+})();
 </script>
 </body>
-</html>

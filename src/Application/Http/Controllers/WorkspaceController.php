@@ -84,6 +84,24 @@ final class WorkspaceController
      *
      * ใช้ 404 (ไม่ใช่ 403) ตอนไม่ใช่สมาชิก เพื่อไม่ leak ว่า workspace id นี้มีอยู่จริง
      */
+    public function listAll(Request $request, Response $response): Response
+    {
+        $workspaces = $this->workspaceRepo->listAll();
+
+        $data = array_map(static fn ($w) => [
+            'id' => $w->id,
+            'code' => $w->code,
+            'name' => $w->name,
+            'description' => $w->description,
+            'status' => $w->status,
+            'created_at' => $w->createdAt,
+        ], $workspaces);
+
+        return ApiResponse::success($response, $data, [
+            'pagination' => ['page' => 1, 'per_page' => count($data), 'total' => count($data)],
+        ]);
+    }
+
     public function show(Request $request, Response $response, array $args): Response
     {
         $targetWorkspaceId = (int) $args['id'];

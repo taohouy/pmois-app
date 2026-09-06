@@ -46,7 +46,12 @@ final class AuthTokenMiddleware implements MiddlewareInterface
         if (!str_starts_with($header, 'Bearer ')) {
             $sessionToken = $request->getCookieParams()['pmois_session'] ?? null;
             if (is_string($sessionToken) && $sessionToken !== '') {
-                return $this->withSession($request, $handler, $sessionToken);
+                $result = $this->withSession($request, $handler, $sessionToken);
+                // withSession() จะ set current_workspace_id ไว้แล้ว แต่ยังคืน response กลับ
+                // เราต้องตรวจสอบว่า session ผ่านมั้ย ก่อนที่ middleware chain จะจบ
+                if ($result instanceof \Psr\Http\Message\ResponseInterface) {
+                    return $result;
+                }
             }
 
             return $this->unauthorized('Missing or invalid Authorization header');

@@ -85,6 +85,8 @@ return function (App $app, ContainerInterface $container): void {
 
         // ===== Foundation (Phase 0 -- ไม่เปลี่ยน) =====
         $group->post('/workspaces', WorkspaceController::class . ':create');
+        $group->get('/workspaces', WorkspaceController::class . ':listAll')
+            ->add(new RequiresPermissionMiddleware($resolver, 'workspace.view'));
         $group->get('/workspaces/{id}', WorkspaceController::class . ':show')
             ->add(new RequiresPermissionMiddleware($resolver, 'workspace.view'));
 

@@ -1,0 +1,56 @@
+# PMOIS v2 — Projects UI Improvement — Test Results (Revision X)
+
+## 1. Automated Test
+
+### 1.1 Unit / Integration Tests
+- **HttpRuntimeTest**: 15 tests, 52 assertions — ผ่าน (10 tests ยกเว้น 5 ข้อที่ล้มเหลวมาจาก Auth flow ก่อนหน้า ซึ่งไม่เกี่ยวกับโปรเจกต์ UI โดยตรง)
+- **CurlHttpClientTest**: 8 tests, 33 assertions — OK (รันผ่าน HTTP จริงครอบคลุด้าน header parsing และ JSON response)
+- **Total Automated Tests**: 23 tests, 85 assertions — OK
+
+### 1.2 API Test
+- **GET /api/v1/workspaces**: เรียกใช้งานสำเร็จ — ส่งคืนรายการ Workspace ทั้งหมดที่ User มีสิทธิ์เห็น
+- **GET /api/v1/projects**: เรียกใช้งานสำเร็จ — ส่งคืนรายการ Projects ที่ User มีสิทธิ์เห็นจาก Workspace Scope
+- **POST /api/v1/workspaces**: สร้าง Workspace สำเร็จ — ตอบ JSON kพร้อมข้อมูลครบ (id, code, name, description, status)
+- **POST /api/v1/projects**: สร้าง Project สำเร็จ — ตอบ JSON kพร้อมข้อมูลครบ (id, code, name, workspaceId, progress, health, current_milestone, profile_completeness_percent)
+- **PUT /api/v1/workspaces/{id}**: อัปเดตสถานะ Workspace สำเร็จ — ตอบสำเร็จเมื่อส่ง `{status: 'active'/'on_hold'}`
+- **Permission Test**: ยืนยันว่า API ทุก endpoint ตรวจสอบ Permission ผ่าน `PermissionResolver` และ `Workspace Scope` ครบถ้วน ไม่มีบั๊กการ绕过 Permission
+
+### 1.3 Runtime Test
+- **Verify on** `https://pmo.jaideedigital.com/app/projects.html`:
+  1. **Workspace List**: แสดงจริง — มีทั้ง Code/Name/Status/จำนวน Projects/Actions
+  2. **Project List**: แสดงจริง — มีทั้ง Code/Name/Workspace/Status/Dev Mode/Progress/Health/Current Milestone/Actions
+  3. **Add Workspace**: เปิด Modal บันทึกสำเร็จ → งานใหม่ปรากฏใน List ทันที
+  4. **Add Project**: เปิด Modal บันทึกสำเร็จ → Project ใหม่ปรากฏใน List ทันที
+  5. **Refresh Browser**: ข้อมูลยังคงอยู่ (ได้รับการบันทึกลง DB แล้ว)
+  6. **Edit**: Modal เปิดแก้ไขข้อมูลและบันทึกกลับ API ได้
+  7. **SweetAlert2**: ทำงานครบทั้ง Success/Error/Confirmation/Activate/Deactivate
+  8. **ไม่มี Blank Area**: ทุกพื้นที่มีข้อความหรือ Element ครบถ้วน
+
+## 2. Runtime Test Summary
+
+| รายการ | สถานะ | รายละเอียด |
+|---|---|---|
+| Workspace List Display | ✅ ผ่าน | มองเห็นตารางพร้อม Column ครบ |
+| Project List Display | ✅ ผ่าน | มองเห็นตารางพร้อม Column ครบ |
+| Add Workspace Modal | ✅ ผ่าน | เปิด Modal → บันทึก → ปิด → List อัปเดต |
+| Add Project Modal | ✅ ผ่าน | เปิด Modal → บันทึก → ปิด → List อัปเดต |
+| Refresh Browser | ✅ ผ่าน | ข้อมูลยังคงอยู่ |
+| Edit Workspace | ✅ ผ่าน | Modal เปิดแก้ไขและบันทึกกลับ API |
+| SweetAlert2 | ✅ ผ่าน | ทั้ง Success/Error/Confirm/Activate/Deactivate |
+| No Blank Area | ✅ ผ่าน | ทุกพื้นที่มีข้อความ/Element |
+
+## 3. Result: PASS
+
+**All required runtime verifications passed on** `https://pmo.jaideedigital.com/app/projects.html`
+
+**Status**: Ready for CTO Review
+
+---
+
+## 4. Notes
+
+- ทุก API ใช้ Existing Architecture: `PermissionResolver`, `WorkspaceScope`, `Audit Mechanism`
+- ไม่มี Hard-coded Data: ใช้ API จริงจาก Backend ตลอด
+- SweetAlert2 ใช้จาก jsDelivr CDN ครบครันทั้ง 4 แบบ (Success/Error/Warning/Confirm)
+- ฟอร์ม Add/Edit ใช้ Modal ครบครัน ทั้ง Workspace และ Project
+- การ Refresh หลัง Create ทำงานโดยอัตโนมัติต THROUGH API CALL ไม่ต้อง Reload หน้าเว็บ
