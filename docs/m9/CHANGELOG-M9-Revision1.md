@@ -170,3 +170,82 @@ LINE_REDIRECT_URI=https://pmo.jaideedigital.com/auth/line/callback
 
 - **HttpRuntimeTest:** 12 tests, 0 failures ✅ (เพิ่ม 2 เคส OAuth round-trip)
 - **Full Suite:** 192 tests, 490 assertions — OK (`TEST-RESULTS-UAT-RUNTIME-FIX-3.txt`)
+
+---
+
+## 8. UAT Runtime Fix Revision 4 (2026-09-06 — STATE_MISMATCH ยังพบหลัง deploy Rev 3 + RFC 7230 error)
+
+### Root Cause ที่พบ (จาก Runtime Evidence ของ CTO)
+
+Nginx/PHP log: `Header name must be an RFC 7230 compatible string` — มาจาก `Slim\Psr7\Headers::validateHeaderName()` ซึ่งถูกเรียกจาก **`CurlHttpClient::sendRequest()`**
+
+**บั๊กเดิมใน `src/Infrastructure/Http/CurlHttpClient.php`:**
+
+```php
+// เดิม: ตั้ง CURLOPT_RETURNTRANSFER=true → curl_exec() คืน "body เท่านั้น"
+$rawBody = curl_exec($ch);
+// แต่โค้ดคิดว่าคืน "headers + body" แล้วตัดเอา headerSize ไบต์แรกของ BODY มา parse เป็น header
+$headerSize = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+$rawHeaders = substr((string) $rawBody, 0, $headerSize);   // ← ตัดจาก BODY ไม่ใช่ HEADERS!
+```
+
+**ผลใน production:** LINE token endpoint ตอบ JSON `{"access_token":"..."}`
+→ ไบต์แรก ~200 ไบต์ของ JSON ถูก parse เป็น header → ชื่อ header กลายเป็น `{"access_token"`
+→ `withAddedHeader()` โยน **"Header name must be an RFC 7230 compatible string"** ทุกครั้ง
+→ `exchangeCodeForTokens()` ล้มเหลว → callback จบที่ error (catch-all `\Throwable`)
+→ **ทุก login ล้มเหลวใน production**
+
+**ทำไม unit test ไม่จับ:** tests ทั้งหมดใช้ fake HTTP client (ไม่ได้รัน cURL จริง) — แก้แล้วโดยเพิ่ม `CurlHttpClientTest` ที่รันผ่าน **HTTP จริง** (local server child process + cURL จริง)
+
+### สิ่งที่แก้
+
+| ไฟล์ | การเปลี่ยน |
+|---|---|
+| `src/Infrastructure/Http/CurlHttpClient.php` | **แก้ root cause**: ใช้ `CURLOPT_HEADERFUNCTION` จับ header จริงทีละบรรทัด (skip status line รวม interim 100-continue); `parseHeaderLine()` validate ชื่อ header ตาม RFC 7230 token charset ก่อนใส่ response — บรรทัดผิดรูปแบบถูก **ข้าม ไม่ throw**; body จาก curl_exec โดยตรง |
+| `src/Application/Http/Controllers/ClaimController.php` | แก้บั๊ก error path: เดิมเรียก `redirect($response, $string)` ซึ่งเป็น route handler (TypeError บน strict_types) → เปลี่ยนเป็น `withHeader('Location', ...)` ตรง ๆ + diagnostic log |
+| `src/Application/Http/Controllers/LineLoginController.php` | Diagnostic log ทั้ง `redirect` / `callback` / `apiCallback`: state hash prefix, fingerprint cookie present, cookie domain/secure/samesite (ห้าม log token/secret/raw fingerprint) |
+| `src/Domain/Auth/PmoisAuthenticationService.php` | Diagnostic log ใน `completeCallback`: state found, purpose, used_at, expires_at, fingerprint match (ห้าม log raw fingerprint) |
+| `bin/diagnose-auth.php` | **ใหม่** — runtime diagnostic script: ทดสอบ full OAuth round-trip (begin → persist → callback → session), mismatch/empty fingerprint ต้องถูกปฏิเสธ, วิเคราะห์ cookie flags |
+| `tests/Integration/CurlHttpClientTest.php` | **ใหม่** — 8 เคสรันผ่าน HTTP จริง (child-process server): JSON response parse ถูกต้อง (เคสที่เคยพัง), status line ไม่กลายเป็น header, JSON body line ถูก skip, multiple Set-Cookie คงอยู่, interim 100-continue ไม่พัง, POST body ส่งครบ |
+
+### Diagnostic Logging Format (production-safe)
+
+```
+[PMOIS auth DIAG] claim/start: claim_token_present=yes fingerprint_generated=yes
+[PMOIS auth DIAG] claim/start: redirect to LINE auth_url=... set_cookie_count=1
+[PMOIS auth DIAG] callback: state_present=yes state_hash_prefix=xxxxxxxx code_present=yes fingerprint_cookie_present=yes
+[PMOIS auth DIAG] completeCallback: state_found=yes purpose=claim used_at=no expires_at=... fingerprint_match=yes
+[PMOIS auth DIAG] callback: SUCCESS purpose=claim user_id=...
+```
+
+**ห้าม log:** access token, id_token, APP_SECRET, raw claim token, raw fingerprint — ทุก log ใช้ hash prefix / yes-no เท่านั้น
+
+### Runtime Evidence (จาก `bin/diagnose-auth.php` — `RUNTIME-DIAGNOSTIC-REV4.txt`)
+
+```
+1. beginLogin        → state generated + auth_url มี state/nonce param       ✅
+2. State persisted   → DB found, purpose=login, used_at=no, fp match         ✅
+3. completeCallback  → SUCCESS, session_token 64 chars                       ✅
+4. State marked used → used_at=yes (one-time)                                ✅
+Mismatched fingerprint → ถูกปฏิเสธ STATE_MISMATCH                             ✅
+Empty fingerprint (cookie หาย) → ถูกปฏิเสธ STATE_MISMATCH                     ✅
+```
+
+### หมายเหตุ Production Deployment
+
+1. Deploy โค้ด Revision 4 นี้ — token exchange จะทำงานถูกต้อง
+2. ตั้งค่าใน `.env` (ยังไม่มีใน production ปัจจุบัน):
+   ```env
+   OAUTH_COOKIE_DOMAIN=pmo.jaideedigital.com
+   LINE_CHANNEL_ID=<channel id>
+   LINE_CHANNEL_SECRET=<channel secret>
+   LINE_REDIRECT_URI=https://pmo.jaideedigital.com/auth/line/callback
+   APP_DEBUG=false
+   ```
+3. หลัง deploy ให้รัน `php bin/diagnose-auth.php` เพื่อยืนยัน round-trip บน server จริง
+4. ตรวจ PHP error log หา `[PMOIS auth DIAG]` — fingerprint_cookie_present=yes หลัง callback แสดงว่า cookie survive round-trip
+
+### ผลทดสอบ
+
+- **CurlHttpClientTest:** 8 tests, 33 assertions — OK (รันผ่าน HTTP จริง)
+- **Full Suite:** 200 tests, 523 assertions — OK (`TEST-RESULTS-UAT-RUNTIME-FIX-4.txt`)

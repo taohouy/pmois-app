@@ -60,6 +60,13 @@ final class LineLoginController
 
         $result = $this->authService->beginLogin($fingerprint);
 
+        // DIAGNOSTIC: log before redirect
+        $cookieStr = self::OAUTH_COOKIE . '=' . $fingerprint . '; ' . $this->cookieFlags() . '; Max-Age=600';
+        error_log('[PMOIS auth DIAG] redirect: state_hash=' . substr(hash('sha256', $result['state']), 0, 8)
+            . ' purpose=login fingerprint_cookie_created=yes domain=' . ($GLOBALS['app_env']['OAUTH_COOKIE_DOMAIN'] ?? '(none)')
+            . ' secure=' . ((bool) ($GLOBALS['app_env']['APP_DEBUG'] ?? false) ? 'no' : 'yes')
+            . ' samesite=Lax cookie_value=' . substr($cookieStr, 0, 200));
+
         return $this->withOAuthCookie($response, $fingerprint)
             ->withHeader('Location', $result['auth_url'])
             ->withStatus(302);
@@ -73,22 +80,31 @@ final class LineLoginController
         $code = (string) ($queryParams['code'] ?? '');
         $fingerprint = (string) $this->getCookie($request, self::OAUTH_COOKIE);
 
+        // DIAGNOSTIC: log callback request
+        error_log('[PMOIS auth DIAG] callback: state_present=' . ($state !== '' ? 'yes' : 'no')
+            . ' state_hash_prefix=' . ($state !== '' ? substr(hash('sha256', $state), 0, 8) : 'none')
+            . ' code_present=' . ($code !== '' ? 'yes' : 'no')
+            . ' fingerprint_cookie_present=' . ($fingerprint !== '' ? 'yes' : 'no'));
+
         if ($state === '' || $code === '') {
+            error_log('[PMOIS auth DIAG] callback: missing state or code → STATE_INVALID');
             return $this->redirectTo($response, '/app/index.html?error=STATE_INVALID');
         }
 
         try {
             $result = $this->authService->completeCallback($state, $code, $fingerprint);
         } catch (\App\Domain\Auth\AuthException $e) {
-            // Known auth error — error code ผ่านไปตรง ๆ (AUTH_FAILED / UNAUTHORIZED_IDENTITY / ... แยกชัดเจน)
-            // รายละเอียด log ฝั่ง server เท่านั้น
-            error_log('[PMOIS auth] callback: ' . $e->errorCode . ($e->getMessage() !== $e->errorCode ? ' — ' . $e->getMessage() : ''));
+            // DIAGNOSTIC: log auth exception
+            error_log('[PMOIS auth DIAG] callback: AuthException=' . $e->errorCode . ' — ' . $e->getMessage());
             return $this->redirectTo($response, '/app/index.html?error=' . urlencode($e->errorCode));
         } catch (\Throwable $e) {
             // Unexpected — AUTH_FAILED (login ไม่สำเร็จ) + log internals server-side
             error_log('[PMOIS auth] unexpected ' . get_class($e) . ': ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
             return $this->redirectTo($response, '/app/index.html?error=AUTH_FAILED');
         }
+
+        // DIAGNOSTIC: log success
+        error_log('[PMOIS auth DIAG] callback: SUCCESS purpose=' . $result['purpose'] . ' user_id=' . $result['user_id']);
 
         $response = $this->withSessionCookie($response, $result['session_token']);
         $response = $this->withExpiredCookie($response, self::OAUTH_COOKIE);
@@ -140,18 +156,27 @@ final class LineLoginController
         $code = (string) ($queryParams['code'] ?? '');
         $fingerprint = (string) $this->getCookie($request, self::OAUTH_COOKIE);
 
+        // DIAGNOSTIC: log callback request
+        error_log('[PMOIS auth DIAG] apiCallback: state_present=' . ($state !== '' ? 'yes' : 'no')
+            . ' state_hash_prefix=' . ($state !== '' ? substr(hash('sha256', $state), 0, 8) : 'none')
+            . ' fingerprint_cookie_present=' . ($fingerprint !== '' ? 'yes' : 'no'));
+
         if ($state === '' || $code === '') {
+            error_log('[PMOIS auth DIAG] apiCallback: missing state or code → STATE_INVALID');
             return ApiResponse::error($response, 'STATE_INVALID', 'Missing state or authorization code', [], 401);
         }
 
         try {
             $result = $this->authService->completeCallback($state, $code, $fingerprint);
         } catch (\App\Domain\Auth\AuthException $e) {
+            error_log('[PMOIS auth DIAG] apiCallback: AuthException=' . $e->errorCode . ' — ' . $e->getMessage());
             return ApiResponse::error($response, $e->errorCode, $this->errorMessage($e->errorCode), [], $this->errorStatus($e->errorCode));
         } catch (\Throwable $e) {
             error_log('[PMOIS auth] api callback unexpected ' . get_class($e) . ': ' . $e->getMessage());
             return ApiResponse::error($response, 'AUTH_FAILED', 'Authentication failed', [], 401);
         }
+
+        error_log('[PMOIS auth DIAG] apiCallback: SUCCESS purpose=' . $result['purpose'] . ' user_id=' . $result['user_id']);
 
         $response = $this->withSessionCookie($response, $result['session_token']);
         $response = $this->withExpiredCookie($response, self::OAUTH_COOKIE);

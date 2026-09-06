@@ -101,18 +101,36 @@ final class PmoisAuthenticationService
      */
     public function completeCallback(string $state, string $code, string $fingerprint): array
     {
+        $stateHash = hash('sha256', $state);
+        $fpHash = hash('sha256', $fingerprint);
+
         // 1. State verification — one-time, bound to browser fingerprint
-        $stateRow = $this->stateRepository->findByStateHash(hash('sha256', $state));
+        $stateRow = $this->stateRepository->findByStateHash($stateHash);
         if ($stateRow === null) {
+            error_log('[PMOIS auth DIAG] completeCallback: STATE_INVALID state_hash_prefix=' . substr($stateHash, 0, 8)
+                . ' fingerprint_present=' . ($fingerprint !== '' ? 'yes' : 'no'));
             throw new AuthException('STATE_INVALID');
         }
+
+        error_log('[PMOIS auth DIAG] completeCallback: state_found=yes state_hash_prefix=' . substr($stateHash, 0, 8)
+            . ' purpose=' . ($stateRow['purpose'] ?? 'login')
+            . ' used_at=' . ($stateRow['used_at'] !== null ? 'yes' : 'no')
+            . ' expires_at=' . (string) ($stateRow['expires_at'] ?? 'null')
+            . ' fingerprint_match=' . (hash_equals((string) $stateRow['fingerprint_hash'], $fpHash) ? 'yes' : 'no')
+            . ' fingerprint_present=' . ($fingerprint !== '' ? 'yes' : 'no'));
+
         if ($stateRow['used_at'] !== null) {
+            error_log('[PMOIS auth DIAG] completeCallback: STATE_REUSED');
             throw new AuthException('STATE_REUSED');
         }
         if (strtotime((string) $stateRow['expires_at']) < time()) {
+            error_log('[PMOIS auth DIAG] completeCallback: STATE_EXPIRED');
             throw new AuthException('STATE_EXPIRED');
         }
-        if (!hash_equals((string) $stateRow['fingerprint_hash'], hash('sha256', $fingerprint))) {
+        if (!hash_equals((string) $stateRow['fingerprint_hash'], $fpHash)) {
+            error_log('[PMOIS auth DIAG] completeCallback: STATE_MISMATCH — stored_fp_hash_prefix=' . substr((string) $stateRow['fingerprint_hash'], 0, 8)
+                . ' received_fp_hash_prefix=' . substr($fpHash, 0, 8)
+                . ' fingerprint_present=' . ($fingerprint !== '' ? 'yes' : 'no'));
             throw new AuthException('STATE_MISMATCH');
         }
 
@@ -132,6 +150,7 @@ final class PmoisAuthenticationService
 
         // 4. PMOIS authentication
         if (($stateRow['purpose'] ?? 'login') === 'claim') {
+            error_log('[PMOIS auth DIAG] completeCallback: proceeding to claim flow');
             return $this->completeClaim((string) $stateRow['claim_token'], $lineUserId, $displayName, $pictureUrl);
         }
 

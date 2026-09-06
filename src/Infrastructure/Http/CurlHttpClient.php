@@ -15,6 +15,17 @@ use RuntimeException;
  * เหตุผลที่มีอยู่: composer.json ไม่มี HTTP client (guzzle ฯลฯ)
  * แต่ LineLoginService (M1 Phase 1 — LINE Login only) ต้องการ client สำหรับ
  * OIDC token exchange + ID token verify — เขียนเองเล็ก ๆ พอ ไม่เพิ่ม dependency ใหม่
+ *
+ * M9 UAT Runtime Fix Revision 4 — แก้ root cause ของ
+ * "Header name must be an RFC 7230 compatible string":
+ *  เดิมโค้ดคิดว่า curl_exec() คืน "headers + body" แล้วตัดเอา CURLINFO_HEADER_SIZE
+ *  ไบต์แรกของ body มา parse เป็น header — แต่ CURLOPT_RETURNTRANSFER คืน "body เท่านั้น"
+ *  ผลคือ JSON จาก LINE ({"access_token":...}) ถูกตัดช่วงต้นมา parse เป็น header
+ *  แล้วชื่อ header กลายเป็น {"access_token" → โยน InvalidArgumentException ทุกครั้งใน production
+ *  (unit test ไม่จับ เพราะ mock HTTP client)
+ *
+ * วิธีแก้: ใช้ CURLOPT_HEADERFUNCTION จับ header จริงทีละบรรทัด (skip status line),
+ *  validate header name ตาม RFC 7230 ก่อนใส่ลง response — บรรทัดที่ผิดรูปแบบข้าม ไม่ throw
  */
 final class CurlHttpClient implements HttpClientInterface
 {
@@ -36,6 +47,9 @@ final class CurlHttpClient implements HttpClientInterface
             }
         }
 
+        /** @var list<array{0: string, 1: string}> $responseHeaders */
+        $responseHeaders = [];
+
         curl_setopt_array($ch, [
             CURLOPT_CUSTOMREQUEST => $request->getMethod(),
             CURLOPT_HTTPHEADER => $headers,
@@ -43,6 +57,15 @@ final class CurlHttpClient implements HttpClientInterface
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_TIMEOUT => 15,
             CURLOPT_CONNECTTIMEOUT => 5,
+            // จับ response header จริงจาก cURL โดยตรง — ไม่ parse จาก body
+            CURLOPT_HEADERFUNCTION => function ($ch, string $line) use (&$responseHeaders): int {
+                $parsed = self::parseHeaderLine($line);
+                if ($parsed !== null) {
+                    $responseHeaders[] = $parsed;
+                }
+
+                return strlen($line); // ต้องคืนจำนวน byte ที่ consume เสมอ
+            },
         ]);
 
         $body = (string) $request->getBody();
@@ -50,42 +73,60 @@ final class CurlHttpClient implements HttpClientInterface
             curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
         }
 
-        $rawBody = curl_exec($ch);
-        if ($rawBody === false) {
+        // CURLOPT_RETURNTRANSFER → curl_exec คืน body เท่านั้น (headers มาทาง HEADERFUNCTION)
+        $responseBody = curl_exec($ch);
+        if ($responseBody === false) {
             $error = curl_error($ch);
             curl_close($ch);
             throw new RuntimeException('HTTP request failed: ' . $error);
         }
-
-        $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        $headerSize = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-        $rawHeaders = substr((string) $rawBody, 0, $headerSize);
-        $responseBody = $headerSize > 0 ? substr((string) $rawBody, $headerSize) : (string) $rawBody;
         curl_close($ch);
+
+        $statusCode = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        if ($statusCode < 100 || $statusCode > 599) {
+            // ไม่มี status จริง (เช่น connect ล้มเหลวแบบเงียบ) — fail-closed
+            throw new RuntimeException('HTTP response has no valid status code');
+        }
 
         $response = $this->responseFactory->createResponse($statusCode);
 
-        foreach ($this->parseHeaders($rawHeaders) as $name => $value) {
+        foreach ($responseHeaders as [$name, $value]) {
             $response = $response->withAddedHeader($name, $value);
         }
 
-        $response->getBody()->write($responseBody);
+        $response->getBody()->write((string) $responseBody);
 
         return $response;
     }
 
     /**
-     * @return array<string, string>
+     * Parse response header line หนึ่งบรรทัด
+     *
+     * @return array{0: string, 1: string}|null [name, value] หรือ null ถ้าไม่ใช่ header
+     *         (status line / บรรทัดว่าง / ชื่อ header ผิดรูปแบบ RFC 7230 — ข้าม ไม่ throw)
      */
-    private function parseHeaders(string $rawHeaders): array
+    public static function parseHeaderLine(string $line): ?array
     {
-        $headers = [];
-        foreach (explode("\r\n", $rawHeaders) as $line) {
-            $parts = explode(':', $line, 2);
-            if (count($parts) === 2) {
-                $headers[trim($parts[0])] = trim($parts[1]);
-            }
+        $line = trim($line, "\r\n");
+
+        if ($line === '' || str_starts_with($line, 'HTTP/')) {
+            // status line (รวม interim "HTTP/1.1 100 Continue") — ไม่ใช่ header
+            return null;
         }
-        return $headers;
+
+        $parts = explode(':', $line, 2);
+        if (count($parts) !== 2) {
+            return null; // ไม่มี colon — ไม่ใช่ header
+        }
+
+        $name = trim($parts[0]);
+        $value = trim($parts[1]);
+
+        // RFC 7230 token charset — เหมือนเกณฑ์ของ Slim PSR-7; ผิดรูปแบบ = ข้าม
+        if ($name === '' || preg_match("@^[!#$%&'*+.^_`|~0-9A-Za-z-]+$@D", $name) !== 1) {
+            return null;
+        }
+
+        return [$name, $value];
     }
 }

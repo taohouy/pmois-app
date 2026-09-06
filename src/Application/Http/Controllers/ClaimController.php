@@ -29,14 +29,26 @@ final class ClaimController
         $claimToken = (string) $args['token'];
         $fingerprint = bin2hex(random_bytes(32));
 
+        // DIAGNOSTIC: log claim flow start
+        error_log('[PMOIS auth DIAG] claim/start: claim_token_present=' . ($claimToken !== '' ? 'yes' : 'no')
+            . ' fingerprint_generated=yes');
+
         try {
             $result = $this->authService->beginClaim($fingerprint, $claimToken);
         } catch (\App\Domain\Auth\AuthException $e) {
-            // browser flow — กลับ login page พร้อม error code (ไม่มี JSON)
-            return $this->lineLoginController->redirect($response, '/app/index.html?error=' . urlencode($e->errorCode));
+            error_log('[PMOIS auth DIAG] claim/start: AuthException=' . $e->errorCode . ' — ' . $e->getMessage());
+            return $response
+                ->withHeader('Location', '/app/index.html?error=' . urlencode($e->errorCode))
+                ->withStatus(302);
         }
 
         $response = $this->lineLoginController->withOAuthCookiePublic($response, $fingerprint);
+
+        // DIAGNOSTIC: log redirect to LINE
+        $cookieHeaders = $response->getHeader('Set-Cookie');
+        error_log('[PMOIS auth DIAG] claim/start: redirect to LINE auth_url=' . substr($result['auth_url'], 0, 100)
+            . ' set_cookie_count=' . count($cookieHeaders)
+            . ' set_cookie_has_oauth=' . (count($cookieHeaders) > 0 ? 'yes' : 'no'));
 
         // 302 ไป LINE Authorization ทันที — ผู้ใช้ไม่เห็น JSON
         return $response->withHeader('Location', $result['auth_url'])->withStatus(302);

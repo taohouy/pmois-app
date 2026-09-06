@@ -1,0 +1,43 @@
+=== PMOIS Auth Diagnostic ===
+
+DB: mysql:host=127.0.0.1;port=3307;dbname=pmois_test;charset=utf8mb4
+DB connected: YES
+
+--- Normal Login Flow ---
+1. beginLogin(fingerprint=...)
+   state generated: YES (prefix=c7b80680)
+   auth_url: https://access.line.me/oauth2/v2.1/authorize?response_type=code&client_id=test-channel-id&redirect_uri=https%3A%2F%2Fpmo...
+   auth_url has state param: YES
+   auth_url has nonce param: YES
+2. State persisted in DB:
+   found: YES
+   purpose: login
+   used_at: NO (OK)
+   fingerprint_hash stored: fce973a1...
+   fingerprint matches: YES
+3. completeCallback(state, code, fingerprint):
+   SUCCESS!
+   user_id: 893
+   workspace_id: 724
+   purpose: login
+   claimed: NO
+   session_token present: YES (64 chars)
+4. State marked as used after callback:
+   used_at: YES (OK)
+
+--- Mismatched Fingerprint Test ---
+   Correctly rejected: STATE_MISMATCH
+
+--- Empty Fingerprint Test (cookie lost) ---
+   Correctly rejected: STATE_MISMATCH
+
+--- Cookie Flags Analysis ---
+   cookieFlags(): Path=/; HttpOnly; SameSite=Lax; Secure
+   has HttpOnly: YES
+   has SameSite=Lax: YES
+   has Secure: YES
+   has Domain: NO — THIS IS THE ROOT CAUSE IF MISSING
+   OAUTH_COOKIE_DOMAIN env: (not set)
+   APP_DEBUG: 
+
+=== Diagnostic Complete ===
