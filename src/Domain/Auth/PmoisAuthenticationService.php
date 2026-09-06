@@ -72,7 +72,7 @@ final class PmoisAuthenticationService
     {
         // claim token ต้อง valid (HMAC + ไม่หมดอายุ) ก่อนเริ่ม OAuth
         if ($this->invitationService->validateClaimToken($claimToken) === null) {
-            throw new \InvalidArgumentException('CLAIM_TOKEN_INVALID');
+            throw new AuthException('CLAIM_TOKEN_INVALID');
         }
 
         $state = bin2hex(random_bytes(32));
@@ -95,25 +95,25 @@ final class PmoisAuthenticationService
 
     /**
      * @return array{user_id: int, workspace_id: int|null, purpose: string, session_token: string, claimed: bool}
-     * @throws \DomainException STATE_INVALID|STATE_EXPIRED|STATE_MISMATCH|STATE_REUSED|UNAUTHORIZED_IDENTITY|CLAIM_TOKEN_INVALID|CLAIM_ALREADY_USED|LINE_ALREADY_BOUND
+     * @throws \AppDomainAuthAuthException STATE_INVALID|STATE_EXPIRED|STATE_MISMATCH|STATE_REUSED|UNAUTHORIZED_IDENTITY|CLAIM_TOKEN_INVALID|CLAIM_ALREADY_USED|LINE_ALREADY_BOUND
      * @throws \RuntimeException OAUTH_EXCHANGE_FAILED
-     * @throws \InvalidArgumentException ID_TOKEN_INVALID
+     * @throws \AppDomainAuthAuthException ID_TOKEN_INVALID
      */
     public function completeCallback(string $state, string $code, string $fingerprint): array
     {
         // 1. State verification — one-time, bound to browser fingerprint
         $stateRow = $this->stateRepository->findByStateHash(hash('sha256', $state));
         if ($stateRow === null) {
-            throw new \DomainException('STATE_INVALID');
+            throw new AuthException('STATE_INVALID');
         }
         if ($stateRow['used_at'] !== null) {
-            throw new \DomainException('STATE_REUSED');
+            throw new AuthException('STATE_REUSED');
         }
         if (strtotime((string) $stateRow['expires_at']) < time()) {
-            throw new \DomainException('STATE_EXPIRED');
+            throw new AuthException('STATE_EXPIRED');
         }
         if (!hash_equals((string) $stateRow['fingerprint_hash'], hash('sha256', $fingerprint))) {
-            throw new \DomainException('STATE_MISMATCH');
+            throw new AuthException('STATE_MISMATCH');
         }
 
         // 2. Exchange + verify ID token (signature/iss/aud/exp/iat/nonce)
@@ -145,24 +145,24 @@ final class PmoisAuthenticationService
     {
         $claimClaims = $this->invitationService->validateClaimToken($claimToken);
         if ($claimClaims === null) {
-            throw new \DomainException('CLAIM_TOKEN_INVALID');
+            throw new AuthException('CLAIM_TOKEN_INVALID');
         }
 
         $userId = (int) $claimClaims['user_id'];
         $user = $this->userRepository->findById($userId);
         if ($user === null) {
-            throw new \DomainException('CLAIM_TOKEN_INVALID');
+            throw new AuthException('CLAIM_TOKEN_INVALID');
         }
 
         // claim reuse: account นี้ถูก claim ไปแล้ว (line_user_id ว่าง = ยังไม่ claim)
         if ($user->lineUserId !== null && $user->lineUserId !== '') {
-            throw new \DomainException('CLAIM_ALREADY_USED');
+            throw new AuthException('CLAIM_ALREADY_USED');
         }
 
         // duplicate binding: LINE account นี้ถูก bind กับ user อื่นแล้ว
         $existing = $this->userRepository->findByLineUserId($lineUserId);
         if ($existing !== null && $existing->id !== $userId) {
-            throw new \DomainException('LINE_ALREADY_BOUND');
+            throw new AuthException('LINE_ALREADY_BOUND');
         }
 
         // bind — ใช้ verified sub เท่านั้น (client ห้ามกำหนดเอง)
@@ -180,7 +180,7 @@ final class PmoisAuthenticationService
 
         // fail-closed: ไม่มี bound user หรือ suspended
         if ($user === null || $user->status !== 'active') {
-            throw new \DomainException('UNAUTHORIZED_IDENTITY');
+            throw new AuthException('UNAUTHORIZED_IDENTITY');
         }
 
         // fail-closed: ต้องมี active workspace membership อย่างน้อย 1
@@ -193,7 +193,7 @@ final class PmoisAuthenticationService
         $membership = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($membership === false) {
-            throw new \DomainException('UNAUTHORIZED_IDENTITY');
+            throw new AuthException('UNAUTHORIZED_IDENTITY');
         }
 
         // 5. create authenticated PMOIS session

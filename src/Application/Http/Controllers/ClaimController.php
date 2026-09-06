@@ -31,9 +31,9 @@ final class ClaimController
 
         try {
             $result = $this->authService->beginClaim($fingerprint, $claimToken);
-        } catch (\InvalidArgumentException $e) {
+        } catch (\App\Domain\Auth\AuthException $e) {
             // browser flow — กลับ login page พร้อม error code (ไม่มี JSON)
-            return $this->lineLoginController->redirect($response, '/app/index.html?error=CLAIM_TOKEN_INVALID');
+            return $this->lineLoginController->redirect($response, '/app/index.html?error=' . urlencode($e->errorCode));
         }
 
         $response = $this->lineLoginController->withOAuthCookiePublic($response, $fingerprint);

@@ -45,7 +45,7 @@ final class InvitationService
         // Resolve role (MEMBER default) — role ต้องมีจริงจาก migration 0011
         $role = $this->roleRepository->findByCode($roleCode);
         if ($role === null) {
-            throw new \InvalidArgumentException("role '{$roleCode}' not seeded");
+            throw new AuthException("role '{$roleCode}' not seeded");
         }
 
         // Active membership ทันที (claim เป็นแค่การ bind line_user_id ภายหลัง)
@@ -85,7 +85,7 @@ final class InvitationService
     {
         $claims = $this->validateClaimToken($token);
         if ($claims === null) {
-            throw new \InvalidArgumentException('Invalid or expired claim token');
+            throw new AuthException('Invalid or expired claim token');
         }
 
         $userId = (int) $claims['user_id'];
@@ -93,16 +93,16 @@ final class InvitationService
         // claim reuse — account นี้ถูก bind ไปแล้ว (ห้าม claim ซ้ำ)
         $user = $this->userRepository->findById($userId);
         if ($user === null) {
-            throw new \InvalidArgumentException('Claim token points to a missing account');
+            throw new AuthException('Claim token points to a missing account');
         }
         if ($user->lineUserId !== null && $user->lineUserId !== '') {
-            throw new \DomainException('CLAIM_ALREADY_USED');
+            throw new AuthException('CLAIM_ALREADY_USED');
         }
 
         // duplicate binding — LINE account นี้ถูก bind กับ user อื่นอยู่แล้ว
         $existing = $this->userRepository->findByLineUserId($lineSub);
         if ($existing !== null && $existing->id !== $userId) {
-            throw new \DomainException('LINE_ALREADY_BOUND');
+            throw new AuthException('LINE_ALREADY_BOUND');
         }
 
         // bind line_user_id — จุดเดียวที่ LINE identity ถูกผูกกับ account (fail-closed rule)

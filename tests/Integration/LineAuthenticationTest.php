@@ -13,6 +13,7 @@ use App\Domain\Identity\RoleRepositoryInterface;
 use App\Domain\Identity\UserRepositoryInterface;
 use App\Domain\Project\ProjectRepositoryInterface;
 use App\Domain\Workspace\WorkspaceMemberRepositoryInterface;
+use App\Domain\Auth\AuthException;
 use App\Infrastructure\Http\HttpClientInterface;
 use App\Infrastructure\Persistence\MySQL\MySqlOAuthStateRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlRoleRepository;
@@ -126,7 +127,7 @@ final class LineAuthenticationTest extends TestCase
 
     public function testMissingStateRejected(): void
     {
-        $this->expectException(\DomainException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('STATE_INVALID');
 
         $this->auth->completeCallback(str_repeat('a', 64), 'auth-code', 'fp-1');
@@ -134,7 +135,7 @@ final class LineAuthenticationTest extends TestCase
 
     public function testMismatchedFingerprintRejected(): void
     {
-        $this->expectException(\DomainException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('STATE_MISMATCH');
 
         $start = $this->auth->beginLogin('fp-browser-A');
@@ -155,9 +156,9 @@ final class LineAuthenticationTest extends TestCase
         // state เป็น one-time — callback รอบที่สองต้องถูกปฏิเสธ
         try {
             $this->auth->completeCallback($start['state'], 'auth-code', 'fp-reuse');
-            $this->fail('expected STATE_REUSED');
-        } catch (\DomainException $e) {
-            $this->assertSame('STATE_REUSED', $e->getMessage());
+            $this->fail('expected STATE_REUSED (AuthException)');
+        } catch (\App\Domain\Auth\AuthException $e) {
+            $this->assertSame('STATE_REUSED', $e->errorCode);
         }
     }
 
@@ -168,7 +169,7 @@ final class LineAuthenticationTest extends TestCase
         $this->db->prepare('UPDATE oauth_login_states SET expires_at = :past WHERE state_hash = :h')
             ->execute(['h' => hash('sha256', $start['state']), 'past' => date('Y-m-d H:i:s', time() - 60)]);
 
-        $this->expectException(\DomainException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('STATE_EXPIRED');
 
         $this->auth->completeCallback($start['state'], 'auth-code', 'fp-exp');
@@ -178,7 +179,7 @@ final class LineAuthenticationTest extends TestCase
 
     public function testInvalidIdTokenRejected(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('ID_TOKEN_INVALID');
 
         $start = $this->auth->beginLogin('fp-invalid');
@@ -195,7 +196,7 @@ final class LineAuthenticationTest extends TestCase
 
     public function testWrongAudienceIdTokenRejected(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('ID_TOKEN_INVALID');
 
         $start = $this->auth->beginLogin('fp-aud');
@@ -206,7 +207,7 @@ final class LineAuthenticationTest extends TestCase
 
     public function testExpiredIdTokenRejected(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('ID_TOKEN_INVALID');
 
         $start = $this->auth->beginLogin('fp-exp-token');
@@ -217,7 +218,7 @@ final class LineAuthenticationTest extends TestCase
 
     public function testNonceMismatchIdTokenRejected(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('ID_TOKEN_INVALID');
 
         $start = $this->auth->beginLogin('fp-nonce');
@@ -230,7 +231,7 @@ final class LineAuthenticationTest extends TestCase
 
     public function testUnauthorizedLineAccountRejected(): void
     {
-        $this->expectException(\DomainException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('UNAUTHORIZED_IDENTITY');
 
         // LINE account ที่ไม่ถูก bind กับ PMOIS user ใดๆ — ห้าม login (ไม่ auto-create)
@@ -241,7 +242,7 @@ final class LineAuthenticationTest extends TestCase
 
     public function testInactiveMembershipRejected(): void
     {
-        $this->expectException(\DomainException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('UNAUTHORIZED_IDENTITY');
 
         // user ถูก bind แต่ suspended
@@ -311,7 +312,7 @@ final class LineAuthenticationTest extends TestCase
         $this->auth->completeCallback($start['state'], 'auth-code', 'fp-claim-1');
 
         // reused claim token — account ถูก claim ไปแล้ว
-        $this->expectException(\DomainException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('CLAIM_ALREADY_USED');
 
         $this->invitationService->processClaim($claimToken, 'U-claim-once', 'Attacker', '');
@@ -327,7 +328,7 @@ final class LineAuthenticationTest extends TestCase
             'exp' => time() - 100,
         ]);
 
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('CLAIM_TOKEN_INVALID');
 
         $this->auth->beginClaim('fp-exp-claim', $expired);
@@ -342,7 +343,7 @@ final class LineAuthenticationTest extends TestCase
         $payload['user_id'] = $this->adminUserId;
         $tampered = $this->base64UrlEncode((string) json_encode($payload)) . '.' . $sig;
 
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('CLAIM_TOKEN_INVALID');
 
         $this->auth->beginClaim('fp-tamper', $tampered);
@@ -361,7 +362,7 @@ final class LineAuthenticationTest extends TestCase
         $start2 = $this->auth->beginClaim('fp-dup-2', $claim2);
         $this->mockSuccessfulLine('U-duplicate', $start2['state']);
 
-        $this->expectException(\DomainException::class);
+        $this->expectException(\App\Domain\Auth\AuthException::class);
         $this->expectExceptionMessage('LINE_ALREADY_BOUND');
 
         $this->auth->completeCallback($start2['state'], 'auth-code', 'fp-dup-2');

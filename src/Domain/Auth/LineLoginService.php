@@ -65,7 +65,7 @@ final class LineLoginService
         ]);
 
         if (!isset($data['access_token'], $data['id_token'])) {
-            throw new \RuntimeException('OAUTH_EXCHANGE_FAILED');
+            throw new AuthException('OAUTH_EXCHANGE_FAILED');
         }
 
         return $data;
@@ -76,7 +76,7 @@ final class LineLoginService
      * แล้ว PMOIS ตรวจซ้ำ issuer / audience / exp / iat / nonce
      *
      * @return array<string, mixed> verified claims
-     * @throws \InvalidArgumentException ID_TOKEN_INVALID (ข้อความระบุเหตุผล)
+     * @throws AuthException ID_TOKEN_INVALID (ข้อความระบุเหตุผล)
      */
     public function verifyIdToken(string $idToken, string $expectedNonce): array
     {
@@ -87,29 +87,29 @@ final class LineLoginService
 
         if (isset($claims['error'])) {
             // LINE ปฏิเสธ id_token (signature ไม่ผ่าน / format พัง ฯลฯ)
-            throw new \InvalidArgumentException('ID_TOKEN_INVALID: ' . ($claims['error_description'] ?? $claims['error']));
+            throw new AuthException('ID_TOKEN_INVALID', 'ID_TOKEN_INVALID: ' . ($claims['error_description'] ?? $claims['error']));
         }
 
         foreach (['iss', 'sub', 'aud', 'exp', 'iat'] as $required) {
             if (!isset($claims[$required])) {
-                throw new \InvalidArgumentException("ID_TOKEN_INVALID: missing {$required} claim");
+                throw new AuthException('ID_TOKEN_INVALID', "ID_TOKEN_INVALID: missing {$required} claim");
             }
         }
 
         if ($claims['iss'] !== self::EXPECTED_ISSUER) {
-            throw new \InvalidArgumentException('ID_TOKEN_INVALID: issuer mismatch');
+            throw new AuthException('ID_TOKEN_INVALID', 'ID_TOKEN_INVALID: issuer mismatch');
         }
         if ($claims['aud'] !== $this->channelId) {
-            throw new \InvalidArgumentException('ID_TOKEN_INVALID: audience mismatch');
+            throw new AuthException('ID_TOKEN_INVALID', 'ID_TOKEN_INVALID: audience mismatch');
         }
         if ((int) $claims['exp'] <= time()) {
-            throw new \InvalidArgumentException('ID_TOKEN_INVALID: token expired');
+            throw new AuthException('ID_TOKEN_INVALID', 'ID_TOKEN_INVALID: token expired');
         }
         if ((int) $claims['iat'] > time() + self::IAT_SKEW) {
-            throw new \InvalidArgumentException('ID_TOKEN_INVALID: issued-at in the future');
+            throw new AuthException('ID_TOKEN_INVALID', 'ID_TOKEN_INVALID: issued-at in the future');
         }
         if ($expectedNonce !== '' && (!isset($claims['nonce']) || !hash_equals($expectedNonce, (string) $claims['nonce']))) {
-            throw new \InvalidArgumentException('ID_TOKEN_INVALID: nonce mismatch');
+            throw new AuthException('ID_TOKEN_INVALID', 'ID_TOKEN_INVALID: nonce mismatch');
         }
 
         return $claims;

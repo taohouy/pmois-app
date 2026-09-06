@@ -54,3 +54,71 @@
 
 **Tests:** `HttpRuntimeTest` (12 เคส) — root before/after login, web 302, API JSON, callback success → session cookie, fail → login?error=, generic 404/500 ไม่มี internals, debug mode rethrow
 **Full Suite:** 187 tests / 465 assertions — OK (`TEST-RESULTS-UAT-RUNTIME-FIX-1.txt`)
+
+---
+
+## 6. UAT Runtime Fix Revision 2 (2026-09-06 — จาก CTO Conditional Pass)
+
+### ปัญหาที่ CTO พบ (2 ข้อ)
+
+| Issue | อาการ | สาเหตุ |
+|---|---|---|
+| 1 | Login สำเร็จ callback กลับไป `/app/index.html?error=AUTH_FAILED` แทน dashboard | Controller ใช้ `safeErrorCode()` สกัด error code จาก exception message string ทำให้ catch-all `\Throwable` กลืน error ทุกอย่างเป็น `AUTH_FAILED` |
+| 2 | Unauthorized identity แสดง `AUTH_FAILED` แทน `UNAUTHORIZED_IDENTITY` | `\DomainException` / `\InvalidArgumentException` ไม่มี error code เป็นของตัวเอง Controller ต้อง parse message string เพื่อแยก Authentication vs Authorization |
+
+### แนวทางการแก้ — AuthException พร้อม `errorCode` property
+
+แยก error code ออกจาก message โดยใช้ class เฉพาะ `App\Domain\Auth\AuthException` ที่ carry `errorCode` เป็น property แยก (ไม่ต้อง parse message string):
+
+```php
+final class AuthException extends \RuntimeException {
+    public function __construct(
+        public readonly string $errorCode,
+        string $detail = ''
+    ) { parent::__construct($detail !== '' ? $detail : $errorCode); }
+}
+```
+
+Controller อ่าน `$e->errorCode` โดยตรง — ไม่ต้อง string-match:
+
+```php
+} catch (AuthException $e) {
+    return $response->withHeader('Location', "/app/index.html?error={$e->errorCode}")->withStatus(302);
+} catch (\Throwable $e) {
+    error_log('[AUTH] ' . $e->getMessage());
+    return $response->withHeader('Location', '/app/index.html?error=AUTH_FAILED')->withStatus(302);
+}
+```
+
+### ไฟล์ที่เปลี่ยน
+
+| ไฟล์ | การเปลี่ยน |
+|---|---|
+| `src/Domain/Auth/AuthException.php` | **ใหม่** — class ใหม่ carry `errorCode` property |
+| `src/Domain/Auth/LineLoginService.php` | `\InvalidArgumentException` → `AuthException('ID_TOKEN_INVALID', ...)`; `\RuntimeException('OAUTH_EXCHANGE_FAILED')` → `AuthException('OAUTH_EXCHANGE_FAILED')` |
+| `src/Domain/Auth/PmoisAuthenticationService.php` | `\DomainException` / `\InvalidArgumentException` → `AuthException` ทั้งหมด (STATE_INVALID, STATE_REUSED, STATE_EXPIRED, STATE_MISMATCH, CLAIM_TOKEN_INVALID, CLAIM_ALREADY_USED, LINE_ALREADY_BOUND, UNAUTHORIZED_IDENTITY) |
+| `src/Domain/Auth/InvitationService.php` | throws ทั้งหมด → `AuthException` |
+| `src/Application/Http/Controllers/LineLoginController.php` | `callback()` / `apiCallback()` catch `AuthException` → ใช้ `$e->errorCode`; catch `\Throwable` → `AUTH_FAILED` + `error_log`; ลบ `safeErrorCode()`; `errorMessage()`/`errorStatus()` รับ errorCode string |
+| `src/Application/Http/Controllers/ClaimController.php` | `start()` catch `AuthException` → 302 with `$e->errorCode` |
+| `tests/Integration/LineAuthenticationTest.php` | `expectException(\DomainException)` / `\InvalidArgumentException` → `\App\Domain\Auth\AuthException`; catch block → `$e->errorCode` |
+| `tests/Integration/HttpRuntimeTest.php` | เพิ่ม `POST /auth/logout` route; `testSessionPersistsAcrossRequests`; `testLogoutRevokesSession`; `testIdTokenInvalidKeepsDistinctErrorCode`; timezone-safe seed (DATE_ADD NOW 8h) |
+
+### Error Code ที่แยกออกจากกันชัดเจน
+
+| Code | ความหมาย | ที่เกิด |
+|---|---|---|
+| `AUTH_FAILED` | Login ล้มเหลว (catch-all) | Controller catch `\Throwable` |
+| `UNAUTHORIZED_IDENTITY` | Login สำเร็จแต่ไม่มี permission | PmoisAuthenticationService |
+| `ID_TOKEN_INVALID` | ID token verify ไม่ผ่าน | LineLoginService |
+| `OAUTH_EXCHANGE_FAILED` | code → token exchange ล้มเหลว | LineLoginService |
+| `STATE_INVALID` / `STATE_REUSED` / `STATE_EXPIRED` / `STATE_MISMATCH` | state validation ล้มเหลว | PmoisAuthenticationService |
+| `CLAIM_TOKEN_INVALID` / `CLAIM_ALREADY_USED` / `LINE_ALREADY_BOUND` | claim flow errors | PmoisAuthenticationService / InvitationService |
+
+### Server-side logging
+
+Production (APP_DEBUG=false): ทุก auth failure ถูก log ผ่าน `error_log()` ที่ฝั่ง server (ไม่ leak ไป client); client เห็นแค่ error code string สั้นๆ ใน URL parameter
+
+### ผลทดสอบ
+
+- **HttpRuntimeTest:** 10 tests, 0 failures ✅
+- **Full Suite:** 190 tests, 472 assertions — OK (`TEST-RESULTS-UAT-RUNTIME-FIX-2.txt`)

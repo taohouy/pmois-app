@@ -79,9 +79,15 @@ final class LineLoginController
 
         try {
             $result = $this->authService->completeCallback($state, $code, $fingerprint);
+        } catch (\App\Domain\Auth\AuthException $e) {
+            // Known auth error — error code ผ่านไปตรง ๆ (AUTH_FAILED / UNAUTHORIZED_IDENTITY / ... แยกชัดเจน)
+            // รายละเอียด log ฝั่ง server เท่านั้น
+            error_log('[PMOIS auth] callback: ' . $e->errorCode . ($e->getMessage() !== $e->errorCode ? ' — ' . $e->getMessage() : ''));
+            return $this->redirectTo($response, '/app/index.html?error=' . urlencode($e->errorCode));
         } catch (\Throwable $e) {
-            // ทุกความล้มเหลว (state/token/identity) → กลับ login page พร้อม error code — ไม่มี internals
-            return $this->redirectTo($response, '/app/index.html?error=' . urlencode($this->safeErrorCode($e)));
+            // Unexpected — AUTH_FAILED (login ไม่สำเร็จ) + log internals server-side
+            error_log('[PMOIS auth] unexpected ' . get_class($e) . ': ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+            return $this->redirectTo($response, '/app/index.html?error=AUTH_FAILED');
         }
 
         $response = $this->withSessionCookie($response, $result['session_token']);
@@ -140,12 +146,11 @@ final class LineLoginController
 
         try {
             $result = $this->authService->completeCallback($state, $code, $fingerprint);
-        } catch (\DomainException $e) {
-            return ApiResponse::error($response, $e->getMessage(), $this->errorMessage($e->getMessage()), [], $this->errorStatus($e->getMessage()));
-        } catch (\InvalidArgumentException $e) {
-            return ApiResponse::error($response, 'ID_TOKEN_INVALID', 'LINE ID token failed verification', [], 401);
-        } catch (\RuntimeException $e) {
-            return ApiResponse::error($response, 'OAUTH_EXCHANGE_FAILED', 'Authorization code exchange failed', [], 401);
+        } catch (\App\Domain\Auth\AuthException $e) {
+            return ApiResponse::error($response, $e->errorCode, $this->errorMessage($e->errorCode), [], $this->errorStatus($e->errorCode));
+        } catch (\Throwable $e) {
+            error_log('[PMOIS auth] api callback unexpected ' . get_class($e) . ': ' . $e->getMessage());
+            return ApiResponse::error($response, 'AUTH_FAILED', 'Authentication failed', [], 401);
         }
 
         $response = $this->withSessionCookie($response, $result['session_token']);
@@ -182,17 +187,6 @@ final class LineLoginController
     private function errorStatus(string $code): int
     {
         return $code === 'UNAUTHORIZED_IDENTITY' ? 403 : 401;
-    }
-
-    private function safeErrorCode(\Throwable $e): string
-    {
-        $message = $e->getMessage();
-        // แสดงเฉพาะ error code ที่ระบบกำหนด — ห้าม leak internals
-        $allowed = ['STATE_INVALID', 'STATE_EXPIRED', 'STATE_MISMATCH', 'STATE_REUSED',
-            'ID_TOKEN_INVALID', 'OAUTH_EXCHANGE_FAILED', 'UNAUTHORIZED_IDENTITY',
-            'CLAIM_TOKEN_INVALID', 'CLAIM_ALREADY_USED', 'LINE_ALREADY_BOUND'];
-
-        return in_array($message, $allowed, true) ? $message : 'AUTH_FAILED';
     }
 
     private function redirectTo(Response $response, string $location): Response

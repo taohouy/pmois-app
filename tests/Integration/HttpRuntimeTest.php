@@ -116,6 +116,7 @@ final class HttpRuntimeTest extends TestCase
         $app->get('/', [$this->controller, 'root']);
         $app->get('/auth/line', [$this->controller, 'redirect']);
         $app->get('/auth/line/callback', [$this->controller, 'callback']);
+        $app->post('/auth/logout', [$this->controller, 'logout']);
         $app->get('/api/v1/auth/line', [$this->controller, 'apiRedirect']);
         $app->get('/api/v1/auth/line/callback', [$this->controller, 'apiCallback']);
         $app->get('/broken', function (): never {
@@ -158,6 +159,29 @@ final class HttpRuntimeTest extends TestCase
 
         $this->assertSame(302, $response->getStatusCode());
         $this->assertSame('/app/dashboard.html', $response->getHeaderLine('Location'));
+    }
+
+    public function testSessionPersistsAcrossRequests(): void
+    {
+        $sessionToken = $this->seedActiveSession();
+        $cookies = ['pmois_session' => $sessionToken];
+
+        // Session Persistence: request ซ้ำด้วย session เดิมต้องเข้า dashboard ได้ทุกครั้ง
+        $this->assertSame('/app/dashboard.html', $this->handle($this->app(false), $this->request('GET', '/', $cookies))->getHeaderLine('Location'));
+        $this->assertSame('/app/dashboard.html', $this->handle($this->app(false), $this->request('GET', '/', $cookies))->getHeaderLine('Location'));
+    }
+
+    public function testLogoutRevokesSession(): void
+    {
+        $sessionToken = $this->seedActiveSession();
+        $cookies = ['pmois_session' => $sessionToken];
+
+        $logoutResponse = $this->handle($this->app(false), $this->request('POST', '/auth/logout', $cookies));
+        $this->assertSame(302, $logoutResponse->getStatusCode());
+        $this->assertSame('/app/index.html', $logoutResponse->getHeaderLine('Location'));
+
+        // session ถูก revoke — root กลับไปหน้า login
+        $this->assertSame('/auth/line', $this->handle($this->app(false), $this->request('GET', '/', $cookies))->getHeaderLine('Location'));
     }
 
     // ===== Issue 1 + 3: Web route 302 / API route JSON =====
@@ -206,7 +230,7 @@ final class HttpRuntimeTest extends TestCase
     public function testFailedLoginCallbackRedirectsToLoginWithError(): void
     {
         $start = $this->auth->beginLogin('fp-bad');
-        // ไม่มี user ที่ bind 'U-nobody' → UNAUTHORIZED_IDENTITY
+        // ไม่มี user ที่ bind 'U-nobody' → UNAUTHORIZED_IDENTITY (login ผ่านแต่ไม่มีสิทธิ์)
         $this->mockVerifyClaims(['iss' => 'https://access.line.me', 'sub' => 'U-nobody', 'aud' => self::CHANNEL_ID, 'exp' => time() + 600, 'iat' => time()], $start['state']);
 
         $response = $this->handle(
@@ -216,6 +240,27 @@ final class HttpRuntimeTest extends TestCase
 
         $this->assertSame(302, $response->getStatusCode());
         $this->assertSame('/app/index.html?error=UNAUTHORIZED_IDENTITY', $response->getHeaderLine('Location'));
+    }
+
+    public function testIdTokenInvalidKeepsDistinctErrorCode(): void
+    {
+        $start = $this->auth->beginLogin('fp-token');
+        // LINE verify ปฏิเสธ id_token — ต้องแสดง ID_TOKEN_INVALID ไม่ใช่ AUTH_FAILED
+        $this->httpHandler = function ($request) {
+            if (str_contains((string) $request->getUri(), 'oauth2/v2.1/verify')) {
+                return FakeLineHttpClient::jsonResponse(['error' => 'invalid_token', 'error_description' => 'Invalid IdToken.']);
+            }
+            return FakeLineHttpClient::jsonResponse(['access_token' => 'at', 'id_token' => 'mocked.jwt.token']);
+        };
+
+        $response = $this->handle(
+            $this->app(false),
+            $this->request('GET', '/auth/line/callback?code=good&state=' . urlencode($start['state']), ['pmois_oauth_fp' => 'fp-token'], 'text/html')
+        );
+
+        $this->assertSame(302, $response->getStatusCode());
+        $this->assertSame('/app/index.html?error=ID_TOKEN_INVALID', $response->getHeaderLine('Location'),
+            'Authentication (token) ต้องแยกจาก AUTH_FAILED และแยกจาก UNAUTHORIZED_IDENTITY (authorization)');
     }
 
     // ===== Issue 4: Production error handling =====
