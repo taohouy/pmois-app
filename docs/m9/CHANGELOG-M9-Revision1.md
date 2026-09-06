@@ -122,3 +122,51 @@ Production (APP_DEBUG=false): ทุก auth failure ถูก log ผ่าน 
 
 - **HttpRuntimeTest:** 10 tests, 0 failures ✅
 - **Full Suite:** 190 tests, 472 assertions — OK (`TEST-RESULTS-UAT-RUNTIME-FIX-2.txt`)
+
+---
+
+## 7. UAT Runtime Fix Revision 3 (2026-09-06 — STATE_MISMATCH during CEO UAT)
+
+### ปัญหาที่พบระหว่าง CEO UAT
+
+Flow: Claim URL → redirect ไป LINE → LINE Login สำเร็จ → callback กลับ PMOIS → redirect ไป `/app/index.html?error=STATE_MISMATCH`
+
+**สาเหตุ:** Cookie `pmois_oauth_fp` ไม่ survive cross-domain round-trip:
+- PMOIS → `access.line.me` → PMOIS callback
+- Cookie ที่สร้างโดย `cookieFlags()` ไม่มี `Domain` attribute → browser ส่ง cookie กลับเฉพาะเมื่อ host ตรงทุกด้าน
+- ใน production (`https://pmo.jaideedigital.com`) ถ้า redirect URI หรือ reverse proxy เปลี่ยน host/port/path แม้เล็กน้อย cookie จะหาย → fingerprint ว่าง → `hash_equals('', hash('sha256', $fingerprint))` → `STATE_MISMATCH`
+- ในทางตรงกันข้าม `SameSite=Lax` อนุญาตให้ cookie ส่งได้ใน top-level redirect (เหมาะสำหรับ OAuth) แต่ถ้าไม่มี `Domain` attribute browser อาจไม่ส่ง cookie ข้าม subdomain
+
+### แก้ไข
+
+| ไฟล์ | การเปลี่ยน |
+|---|---|
+| `src/Application/Http/Controllers/LineLoginController.php` | `cookieFlags()` เพิ่ม `Domain` attribute จาก env `OAUTH_COOKIE_DOMAIN` (ว่าง = ไม่ใส่ สำหรับ dev/localhost) |
+| `deploy/.env.production.example` | เพิ่ม `OAUTH_COOKIE_DOMAIN=pmo.jaideedigital.com` + `LINE_REDIRECT_URI` แก้เป็นโดเมนจริง + คำอธิบายว่าทำไมจำเป็น |
+| `tests/Integration/HttpRuntimeTest.php` | เพิ่ม 2 เคส: `testNormalLoginFullOAuthRoundTripStatePersists` + `testClaimFlowFullOAuthRoundTripStatePersists` — ทดสอบ state และ fingerprint cookie ทั้ง redirect และ callback |
+
+### สิ่งที่ตรวจสอบและยืนยันว่าถูกต้องแล้ว (ไม่ต้องแก้)
+
+1. **State Generation** — `bin2hex(random_bytes(32))` cryptographically secure, unique ต่อ login attempt ✅
+2. **State Persistence** — เก็บใน `oauth_login_states` DB table เป็น `sha256` hash ก่อน redirect ไป LINE (`beginLogin` / `beginClaim`) ✅
+3. **State validation** — `findByStateHash` + `hash_equals` timing-safe + one-time use (`markUsed`) ✅
+4. **Claim flow ใช้ mechanism เดียวกับ normal login** — `beginClaim` สร้าง state ผ่าน `stateRepository->create` เหมือน `beginLogin` (purpose='claim') callback ผ่าน `completeCallback` ที่เดียว ✅
+5. **`SameSite=Lax`** — เหมาะสำหรับ OAuth top-level redirect (อนุญาต cookie ข้าม site ใน redirect) ✅
+6. **`HttpOnly`** — cookie ไม่ถูก JS อ่าน ✅
+7. **`Secure`** — HTTPS-only ใน production (APP_DEBUG=false) ✅
+8. **`Max-Age=600`** — oauth fingerprint cookie หมดอายุใน 10 นาที (พอสำหรับ OAuth round-trip) ✅
+
+### สิ่งที่ต้องตั้งค่าใน production
+
+```env
+# .env (production)
+OAUTH_COOKIE_DOMAIN=pmo.jaideedigital.com
+LINE_REDIRECT_URI=https://pmo.jaideedigital.com/auth/line/callback
+```
+
+ถ้าไม่ตั้ง `OAUTH_COOKIE_DOMAIN` ใน production → cookie จะไม่มี Domain attribute → browser อาจไม่ส่ง cookie กลับหลัง redirect จาก LINE → `STATE_MISMATCH`
+
+### ผลทดสอบ
+
+- **HttpRuntimeTest:** 12 tests, 0 failures ✅ (เพิ่ม 2 เคส OAuth round-trip)
+- **Full Suite:** 192 tests, 490 assertions — OK (`TEST-RESULTS-UAT-RUNTIME-FIX-3.txt`)

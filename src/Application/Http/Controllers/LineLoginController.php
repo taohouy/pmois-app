@@ -203,8 +203,10 @@ final class LineLoginController
     private function cookieFlags(): string
     {
         $debug = (bool) ($GLOBALS['app_env']['APP_DEBUG'] ?? false);
+        $domain = $GLOBALS['app_env']['OAUTH_COOKIE_DOMAIN'] ?? '';
+        $domainAttr = $domain !== '' ? '; Domain=' . $domain : '';
 
-        return 'Path=/; HttpOnly; SameSite=Lax' . ($debug ? '' : '; Secure');
+        return 'Path=/; HttpOnly; SameSite=Lax' . ($debug ? '' : '; Secure') . $domainAttr;
     }
 
     public function withOAuthCookiePublic(Response $response, string $fingerprint): Response
