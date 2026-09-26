@@ -41,7 +41,7 @@ final class ProjectStructureService
             fromParentProjectId: null,
             toParentProjectId: null,
             reason: $reason,
-            changedBy: 0, // will be set by service
+            changedBy: $actorId,
             createdAt: (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
         ));
     }
@@ -85,7 +85,7 @@ final class ProjectStructureService
             fromParentProjectId: $oldParentId,
             toParentProjectId: $newParentId,
             reason: $reason,
-            changedBy: 0,
+            changedBy: $actorId,
             createdAt: (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
         ));
     }
@@ -117,7 +117,7 @@ final class ProjectStructureService
             fromParentProjectId: $project->parentProjectId,
             toParentProjectId: null,
             reason: $reason,
-            changedBy: 0,
+            changedBy: $actorId,
             createdAt: (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
         ));
     }

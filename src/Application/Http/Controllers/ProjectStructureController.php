@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Application\Http\Controllers;
 
 use App\Application\Http\Responders\ApiResponse;
+use App\Domain\Identity\PermissionResolver;
 use App\Domain\Project\ProjectStructureService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -15,8 +16,10 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  */
 final class ProjectStructureController
 {
-    public function __construct(private readonly ProjectStructureService $projectStructureService)
-    {
+    public function __construct(
+        private readonly ProjectStructureService $projectStructureService,
+        private readonly PermissionResolver $permissionResolver,
+    ) {
     }
 
     public function update(Request $request, Response $response, array $args): Response
@@ -33,7 +36,16 @@ final class ProjectStructureController
                     if (empty($body['new_workspace_id'])) {
                         return ApiResponse::error($response, 'VALIDATION_ERROR', 'new_workspace_id is required', [], 422);
                     }
-                    $this->projectStructureService->moveWorkspace($projectId, (int) $body['new_workspace_id'], $actorId, $reason);
+                    $newWorkspaceId = (int) $body['new_workspace_id'];
+                    // แก้ไข (M3 Completion Gate — พบระหว่าง regression check): route middleware
+                    // เช็ค project.structure.update กับ project (workspace ต้นทาง) เท่านั้น ไม่รู้จัก
+                    // workspace ปลายทาง — ไม่เช็คซ้ำตรงนี้ผู้ใช้จะย้าย project เข้า workspace ใดก็ได้
+                    // ในระบบโดยไม่ต้องเป็นสมาชิกของ workspace ปลายทางเลย (เหมือน gap เดียวกับที่
+                    // แก้ไปแล้วใน WorkspaceController::update() และ ProjectController::update())
+                    if (!$this->permissionResolver->can($actorId, $newWorkspaceId, null, 'project.create')) {
+                        return ApiResponse::error($response, 'FORBIDDEN', 'ไม่มีสิทธิ์ย้ายโครงการเข้าพื้นที่ทำงานนี้', [], 403);
+                    }
+                    $this->projectStructureService->moveWorkspace($projectId, $newWorkspaceId, $actorId, $reason);
                     break;
                 case 'change_parent':
                     $newParentId = isset($body['new_parent_id']) && $body['new_parent_id'] !== null ? (int) $body['new_parent_id'] : null;

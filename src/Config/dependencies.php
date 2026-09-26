@@ -259,7 +259,8 @@ return [
         $c->get(ProjectStructureHistoryRepositoryInterface::class)
     ),
     ProjectStructureController::class => fn (ContainerInterface $c) => new ProjectStructureController(
-        $c->get(ProjectStructureService::class)
+        $c->get(ProjectStructureService::class),
+        $c->get(PermissionResolver::class)
     ),
     ProjectStructureHistoryController::class => fn (ContainerInterface $c) => new ProjectStructureHistoryController(
         $c->get(ProjectStructureService::class)

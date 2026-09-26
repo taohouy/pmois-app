@@ -174,10 +174,19 @@ final class ProjectController
      * PUT /api/v1/projects/{id}
      * Permission: project.update
      *
-     * Edit modal ของ Projects UI Revision X รองรับเฉพาะ field ที่มี Repository Method
-     * อยู่แล้ว: progress/health (updateProgress) และ workspace (updateWorkspace) —
-     * name/code/development_mode ไม่มี Repository Method รองรับการแก้ไขใน Design
-     * ที่อนุมัติ จึงยังไม่เปิดให้แก้ (ฟอร์มฝั่ง UI ก็ปิด field เหล่านี้ตอน Edit เช่นกัน)
+     * Edit modal ของ Projects UI รองรับเฉพาะ field ที่มี Repository Method อยู่แล้ว:
+     * progress/health (updateProgress) — name/code/development_mode ไม่มี Repository
+     * Method รองรับการแก้ไขใน Design ที่อนุมัติ จึงยังไม่เปิดให้แก้ (ฟอร์มฝั่ง UI ก็ปิด
+     * field เหล่านี้ตอน Edit เช่นกัน)
+     *
+     * หมายเหตุ (M3 Completion Gate): เดิม endpoint นี้เคยรับ workspaceId มาเรียก
+     * updateWorkspace() ตรงๆ ด้วย (สำหรับปุ่ม "ย้ายพื้นที่ทำงาน") — เอาออกแล้ว เพราะ
+     * "ย้าย workspace" มี canonical flow ที่อนุมัติแล้วอยู่ก่อนแล้วคือ
+     * PATCH /api/v1/projects/{id}/structure (action=move_workspace,
+     * ProjectStructureService::moveWorkspace(), บันทึกลง project_structure_history
+     * โดยเฉพาะ) — การมี 2 endpoint ทำหน้าที่เดียวกันจะทำให้ audit trail กระจัดกระจาย
+     * และเสี่ยง permission check ไม่ตรงกัน จึงให้ Edit endpoint นี้ทำหน้าที่แก้ progress/
+     * health เท่านั้น ตรงตาม doc-comment เดิม
      */
     public function update(Request $request, Response $response, array $args): Response
     {
@@ -192,17 +201,10 @@ final class ProjectController
         $beforeValue = [
             'progress' => $project->progressPercent,
             'health' => $project->health,
-            'workspaceId' => $project->workspaceId,
         ];
 
-        // เก็บค่าที่จะเปลี่ยนไว้ในตัวแปร local แทนการ findById() ซ้ำท้ายเมธอด — เพราะถ้า
-        // workspaceId เปลี่ยน การ findById() แบบไม่ระบุ override (scope ตาม session) จะหา
-        // project ที่เพิ่งย้ายออกจาก workspace ของ session ไม่เจอ (คืน null) ทำให้ตอบ response
-        // เป็นค่าว่างทั้งหมดทั้งที่บันทึกสำเร็จจริง (พบระหว่าง security regression check รอบ
-        // Consolidated Stabilization)
         $newProgress = $project->progressPercent;
         $newHealth = $project->health;
-        $newWorkspaceId = $project->workspaceId;
 
         if (array_key_exists('progress', $body) || array_key_exists('health', $body)) {
             $newProgress = isset($body['progress']) && $body['progress'] !== ''
@@ -220,21 +222,6 @@ final class ProjectController
             $this->projectRepo->updateProgress($projectId, $newProgress, $newHealth);
         }
 
-        if (!empty($body['workspaceId'])) {
-            $targetWorkspaceId = (int) $body['workspaceId'];
-            $userId = (int) $request->getAttribute('user_id');
-            // แก้ไข (Consolidated Stabilization, พบระหว่าง security regression check):
-            // project.update permission (route middleware) เช็คสิทธิ์กับ workspace ปัจจุบัน
-            // ของ project เท่านั้น ไม่รู้จัก workspace ปลายทางที่ระบุใน body — ถ้าไม่เช็คซ้ำตรงนี้
-            // ผู้ใช้ที่มีสิทธิ์แก้โครงการของตัวเองจะสามารถ "ย้าย" โครงการเข้า workspace ใดก็ได้
-            // ในระบบ แม้ไม่ได้เป็นสมาชิกของ workspace ปลายทางเลยก็ตาม (cross-tenant injection)
-            if (!$this->permissionResolver->can($userId, $targetWorkspaceId, null, 'project.create')) {
-                return ApiResponse::error($response, 'FORBIDDEN', 'ไม่มีสิทธิ์ย้ายโครงการเข้าพื้นที่ทำงานนี้', [], 403);
-            }
-            $this->projectRepo->updateWorkspace($projectId, $targetWorkspaceId);
-            $newWorkspaceId = $targetWorkspaceId;
-        }
-
         $auditContext = $request->getAttribute('audit_context');
         $auditContext?->record(
             entityType: 'project',
@@ -243,7 +230,6 @@ final class ProjectController
             afterValue: [
                 'progress' => $newProgress,
                 'health' => $newHealth,
-                'workspaceId' => $newWorkspaceId,
             ]
         );
 
@@ -252,7 +238,7 @@ final class ProjectController
             'code' => $project->code,
             'name' => $project->name,
             'status' => $project->status,
-            'workspaceId' => $newWorkspaceId,
+            'workspaceId' => $project->workspaceId,
             'development_mode' => $project->developmentMode,
             'progress' => $newProgress,
             'health' => $newHealth,

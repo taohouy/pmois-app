@@ -209,7 +209,7 @@ async function openAddProjectModal(project = null, defaultWorkspaceId = null) {
       <label>รหัส *</label>
       <input type="text" name="code" required placeholder="PRJ-00100" ${project ? 'disabled' : ''}>
       <label>พื้นที่ทำงาน</label>
-      <select name="workspaceId">${workspacesHTML}</select>
+      <select name="workspaceId" ${project ? 'disabled' : ''}>${workspacesHTML}</select>
       <label>รูปแบบการพัฒนา</label>
       <select name="development_mode" ${project ? 'disabled' : ''}>
         <option value="">ค่าเริ่มต้น</option>
@@ -544,7 +544,12 @@ async function moveProject(projectId) {
   if (!result.isConfirmed) return;
 
   try {
-    await api(`/api/v1/projects/${projectId}`, { method: 'PUT', body: JSON.stringify({ workspaceId: result.value }) });
+    // ใช้ canonical structure endpoint (มีอยู่แล้ว รองรับ move_workspace/change_parent/promote
+    // พร้อม audit ของตัวเองใน project_structure_history) แทนการเรียก PUT ตรงๆ
+    await api(`/api/v1/projects/${projectId}/structure`, {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'move_workspace', new_workspace_id: result.value }),
+    });
     await showSwal('สำเร็จ', 'ย้ายพื้นที่ทำงานสำเร็จ', 'success');
     await loadAll();
   } catch (err) {
