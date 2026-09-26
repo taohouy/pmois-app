@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Application\Http\Controllers;
 
 use App\Application\Http\Responders\ApiResponse;
+use App\Domain\Identity\PermissionResolver;
 use App\Domain\Project\ProjectRepositoryInterface;
 use App\Domain\Workspace\WorkspaceRepositoryInterface;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -16,19 +17,39 @@ final class ProjectController
         private readonly ProjectRepositoryInterface $projectRepo,
         private readonly \App\Domain\Project\ProjectCreationPipeline $creationPipeline,
         private readonly WorkspaceRepositoryInterface $workspaceRepo,
+        private readonly PermissionResolver $permissionResolver,
     ) {
     }
 
     /**
-     * GET /api/v1/projects
-     * Permission: project.view (เช็คผ่าน RequiresPermissionMiddleware ที่ผูกกับ route นี้)
+     * GET /api/v1/projects[?workspace_id=]
+     * Permission: project.view (เช็คผ่าน RequiresPermissionMiddleware ที่ผูกกับ route นี้ —
+     * เช็คกับ workspace ของ session เท่านั้น; ถ้ามี ?workspace_id= ระบุ workspace อื่น ต้อง
+     * เช็คซ้ำกับ workspace เป้าหมายจริงตรงนี้เสมอ เหมือน pattern เดียวกับ
+     * WorkspaceController::update())
+     *
+     * รองรับ query param ?workspace_id= เพิ่มเติม (ไม่บังคับ ไม่มีผลย้อนหลังกับ consumer เดิม)
+     * เพื่อให้ Workspace Tabs ของหน้า Projects ดูโครงการของ workspace อื่นที่ผู้ใช้เป็นสมาชิก
+     * ด้วยได้จริง (ไม่ใช่แค่ workspace เดียวที่ผูกกับ session) — ไม่ระบุ = พฤติกรรมเดิมทุกประการ
      *
      * Projects UI Revision X ต้องแสดง Workspace/Dev Mode/Progress/Health/Current
      * Milestone ในตาราง — ข้อมูลเหล่านี้มีอยู่แล้วใน Project entity แค่ไม่เคยถูก map ออก
      */
     public function index(Request $request, Response $response): Response
     {
-        $projects = $this->projectRepo->listByWorkspace();
+        $queryParams = $request->getQueryParams();
+        $workspaceIdOverride = null;
+
+        if (!empty($queryParams['workspace_id'])) {
+            $workspaceIdOverride = (int) $queryParams['workspace_id'];
+            $userId = (int) $request->getAttribute('user_id');
+
+            if (!$this->permissionResolver->can($userId, $workspaceIdOverride, null, 'project.view')) {
+                return ApiResponse::error($response, 'FORBIDDEN', 'ไม่มีสิทธิ์ดูโครงการในพื้นที่ทำงานนี้', [], 403);
+            }
+        }
+
+        $projects = $this->projectRepo->listByWorkspace($workspaceIdOverride);
 
         $workspaceCodeById = [];
         foreach ($this->workspaceRepo->listAll() as $w) {
@@ -59,6 +80,18 @@ final class ProjectController
      *
      * R6: creation ผ่าน ProjectCreationPipeline — template + workspace defaults
      * (CEO กรอกข้อมูลให้น้อยที่สุด: name, code + cto/dev/mode ที่ pre-fill จาก defaults)
+     *
+     * หมายเหตุ (Consolidated Stabilization — ตัดสินใจไม่ทำ ไม่ใช่ทำไม่สำเร็จ): เคยลองให้
+     * สร้างเข้า workspace อื่นที่ไม่ใช่ workspace ของ session ได้ (ตาม body.workspaceId) เพื่อ
+     * รองรับ Workspace Tabs แต่พบว่า ProjectCreationPipeline เรียก repository อื่นอีกหลายตัว
+     * ต่อ (ProjectMemberRepository, MilestoneRepository, ProjectTechStackRepository,
+     * WorkspaceModuleSettingRepository, ApiTokenRepository, Governance auto-bind, AI
+     * assignment ฯลฯ) ซึ่งทุกตัวถูก inject 'current_workspace_id' ของ session ตายตัวผ่าน DI
+     * container เหมือนกันหมด — การให้สร้างข้าม workspace ได้จริงต้องแก้ scoping ของทุก
+     * repository เหล่านี้ ซึ่งเป็นการเปลี่ยน architecture ใหญ่เกินขอบเขตของ stabilization
+     * revision นี้ (และเสี่ยงต่อ Workspace Isolation ที่ frozen ไว้) จึงคงพฤติกรรมเดิม: สร้าง
+     * เข้า workspace ของ session เท่านั้นเสมอ ไม่ว่า body จะส่ง workspaceId อะไรมาก็ตาม —
+     * รายงานเป็น known limitation แทนการฝืนทำ (ดู Handoff Note)
      */
     public function create(Request $request, Response $response): Response
     {
@@ -91,6 +124,7 @@ final class ProjectController
             'code' => $project->code,
             'name' => $project->name,
             'status' => $project->status,
+            'workspaceId' => $project->workspaceId,
             'development_mode' => $project->developmentMode,
             'source_template_id' => $project->sourceTemplateId,
             'profile_completeness_percent' => $result['profile_completeness_percent'],
@@ -161,27 +195,45 @@ final class ProjectController
             'workspaceId' => $project->workspaceId,
         ];
 
+        // เก็บค่าที่จะเปลี่ยนไว้ในตัวแปร local แทนการ findById() ซ้ำท้ายเมธอด — เพราะถ้า
+        // workspaceId เปลี่ยน การ findById() แบบไม่ระบุ override (scope ตาม session) จะหา
+        // project ที่เพิ่งย้ายออกจาก workspace ของ session ไม่เจอ (คืน null) ทำให้ตอบ response
+        // เป็นค่าว่างทั้งหมดทั้งที่บันทึกสำเร็จจริง (พบระหว่าง security regression check รอบ
+        // Consolidated Stabilization)
+        $newProgress = $project->progressPercent;
+        $newHealth = $project->health;
+        $newWorkspaceId = $project->workspaceId;
+
         if (array_key_exists('progress', $body) || array_key_exists('health', $body)) {
-            $progress = isset($body['progress']) && $body['progress'] !== ''
+            $newProgress = isset($body['progress']) && $body['progress'] !== ''
                 ? (int) $body['progress']
                 : $project->progressPercent;
-            $health = !empty($body['health']) ? (string) $body['health'] : $project->health;
+            $newHealth = !empty($body['health']) ? (string) $body['health'] : $project->health;
 
-            if ($progress < 0 || $progress > 100) {
+            if ($newProgress < 0 || $newProgress > 100) {
                 return ApiResponse::error($response, 'VALIDATION_ERROR', 'progress ต้องอยู่ระหว่าง 0-100', [], 422);
             }
-            if (!in_array($health, ['green', 'yellow', 'red'], true)) {
+            if (!in_array($newHealth, ['green', 'yellow', 'red'], true)) {
                 return ApiResponse::error($response, 'VALIDATION_ERROR', 'health ไม่ถูกต้อง', [], 422);
             }
 
-            $this->projectRepo->updateProgress($projectId, $progress, $health);
+            $this->projectRepo->updateProgress($projectId, $newProgress, $newHealth);
         }
 
         if (!empty($body['workspaceId'])) {
-            $this->projectRepo->updateWorkspace($projectId, (int) $body['workspaceId']);
+            $targetWorkspaceId = (int) $body['workspaceId'];
+            $userId = (int) $request->getAttribute('user_id');
+            // แก้ไข (Consolidated Stabilization, พบระหว่าง security regression check):
+            // project.update permission (route middleware) เช็คสิทธิ์กับ workspace ปัจจุบัน
+            // ของ project เท่านั้น ไม่รู้จัก workspace ปลายทางที่ระบุใน body — ถ้าไม่เช็คซ้ำตรงนี้
+            // ผู้ใช้ที่มีสิทธิ์แก้โครงการของตัวเองจะสามารถ "ย้าย" โครงการเข้า workspace ใดก็ได้
+            // ในระบบ แม้ไม่ได้เป็นสมาชิกของ workspace ปลายทางเลยก็ตาม (cross-tenant injection)
+            if (!$this->permissionResolver->can($userId, $targetWorkspaceId, null, 'project.create')) {
+                return ApiResponse::error($response, 'FORBIDDEN', 'ไม่มีสิทธิ์ย้ายโครงการเข้าพื้นที่ทำงานนี้', [], 403);
+            }
+            $this->projectRepo->updateWorkspace($projectId, $targetWorkspaceId);
+            $newWorkspaceId = $targetWorkspaceId;
         }
-
-        $updated = $this->projectRepo->findById($projectId);
 
         $auditContext = $request->getAttribute('audit_context');
         $auditContext?->record(
@@ -189,22 +241,22 @@ final class ProjectController
             entityId: $projectId,
             beforeValue: $beforeValue,
             afterValue: [
-                'progress' => $updated->progressPercent,
-                'health' => $updated->health,
-                'workspaceId' => $updated->workspaceId,
+                'progress' => $newProgress,
+                'health' => $newHealth,
+                'workspaceId' => $newWorkspaceId,
             ]
         );
 
         return ApiResponse::success($response, [
-            'id' => $updated->id,
-            'code' => $updated->code,
-            'name' => $updated->name,
-            'status' => $updated->status,
-            'workspaceId' => $updated->workspaceId,
-            'development_mode' => $updated->developmentMode,
-            'progress' => $updated->progressPercent,
-            'health' => $updated->health,
-            'current_milestone' => $updated->currentMilestoneId,
+            'id' => $project->id,
+            'code' => $project->code,
+            'name' => $project->name,
+            'status' => $project->status,
+            'workspaceId' => $newWorkspaceId,
+            'development_mode' => $project->developmentMode,
+            'progress' => $newProgress,
+            'health' => $newHealth,
+            'current_milestone' => $project->currentMilestoneId,
         ]);
     }
 }

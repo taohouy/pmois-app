@@ -6,19 +6,38 @@
 <title>PMOIS v2 — Projects</title>
 <link rel="stylesheet" href="app.css">
 </head>
-<body>
+<body class="projects-page">
 <div class="container">
   <h1>Projects</h1>
 
-  <div class="card" style="margin-bottom:16px">
-    <button class="btn secondary" id="addWorkspaceBtn">+ เพิ่ม Workspace</button>
+  <div class="ws-tabs-row">
+    <div class="ws-tabs" id="wsTabs"></div>
+    <button class="btn primary ws-add-btn" id="addWorkspaceBtn">+ เพิ่มพื้นที่ทำงาน</button>
   </div>
 
-  <div id="workspaceList"></div>
+  <div class="ws-header" id="wsHeader"></div>
 
-  <button class="btn secondary" id="addProjectBtn" style="margin-top:8px">+ เพิ่ม Project</button>
+  <div class="toolbar">
+    <input type="search" id="projectSearch" placeholder="ค้นหาโครงการ...">
+    <select id="statusFilter">
+      <option value="">สถานะ: ทั้งหมด</option>
+      <option value="planning">วางแผน</option>
+      <option value="active">กำลังดำเนินการ</option>
+      <option value="on_hold">ระงับชั่วคราว</option>
+      <option value="closed">ปิดโครงการ</option>
+    </select>
+    <select id="healthFilter">
+      <option value="">สุขภาพ: ทั้งหมด</option>
+      <option value="green">ปกติ</option>
+      <option value="yellow">เฝ้าระวัง</option>
+      <option value="red">เสี่ยง</option>
+    </select>
+    <span class="toolbar-spacer"></span>
+    <button class="btn primary" id="addProjectBtn">+ เพิ่มโครงการ</button>
+  </div>
 
-  <div id="projectList"></div>
+  <div class="table-scroll" id="projectList"></div>
+  <div class="pagination" id="projectPagination"></div>
 </div>
 
 <script src="app.js"></script>
@@ -28,8 +47,31 @@ topbar('projects');
 /* ===== Init on Load ===== */
 (async () => {
   await requireSession();
-  await loadWorkspaces();
-  await loadProjects();
+  await loadAll();
+
+  document.getElementById('addWorkspaceBtn').addEventListener('click', () => openAddWorkspaceModal());
+  document.getElementById('addProjectBtn').addEventListener('click', () => openAddProjectModal(null, _activeWorkspaceId));
+
+  let searchDebounce;
+  document.getElementById('projectSearch').addEventListener('input', (e) => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => {
+      _search = e.target.value;
+      _page = 1;
+      renderProjectSection();
+    }, 150);
+  });
+  document.getElementById('statusFilter').addEventListener('change', (e) => {
+    _statusFilter = e.target.value;
+    _page = 1;
+    renderProjectSection();
+  });
+  document.getElementById('healthFilter').addEventListener('change', (e) => {
+    _healthFilter = e.target.value;
+    _page = 1;
+    renderProjectSection();
+  });
 })();
 </script>
 </body>
+</html>

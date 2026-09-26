@@ -60,3 +60,91 @@ form.inline > div { flex: 1; min-width: 140px; }
 .modal-overlay { position: fixed; inset: 0; background: rgba(17, 24, 39, .5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
 .modal-box { background: var(--card); border-radius: 8px; padding: 24px; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; }
 .modal-box label { margin-top: 8px; }
+
+/* ===== K2D — self-hosted (Projects page only). Files: public/app/fonts/k2d/*.woff2
+   License: SIL Open Font License 1.1, see public/app/fonts/k2d/OFL.txt.
+   Loaded from this project's own static assets — no Google Fonts/CDN request. ===== */
+@font-face {
+  font-family: 'K2D'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('fonts/k2d/k2d-thai-400.woff2') format('woff2');
+  unicode-range: U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+@font-face {
+  font-family: 'K2D'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('fonts/k2d/k2d-latin-400.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+2000-206F, U+2122;
+}
+@font-face {
+  font-family: 'K2D'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('fonts/k2d/k2d-thai-500.woff2') format('woff2');
+  unicode-range: U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+@font-face {
+  font-family: 'K2D'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('fonts/k2d/k2d-latin-500.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+2000-206F, U+2122;
+}
+@font-face {
+  font-family: 'K2D'; font-style: normal; font-weight: 600; font-display: swap;
+  src: url('fonts/k2d/k2d-thai-600.woff2') format('woff2');
+  unicode-range: U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+@font-face {
+  font-family: 'K2D'; font-style: normal; font-weight: 600; font-display: swap;
+  src: url('fonts/k2d/k2d-latin-600.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+2000-206F, U+2122;
+}
+@font-face {
+  font-family: 'K2D'; font-style: normal; font-weight: 700; font-display: swap;
+  src: url('fonts/k2d/k2d-thai-700.woff2') format('woff2');
+  unicode-range: U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+@font-face {
+  font-family: 'K2D'; font-style: normal; font-weight: 700; font-display: swap;
+  src: url('fonts/k2d/k2d-latin-700.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+2000-206F, U+2122;
+}
+
+/* Applies only to the Projects page (body.projects-page) — other pages/modules untouched */
+body.projects-page,
+body.projects-page .swal2-popup,
+body.projects-page input, body.projects-page select, body.projects-page textarea, body.projects-page button {
+  font-family: 'K2D', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* ===== Projects page — full width layout ===== */
+body.projects-page .container { max-width: 1600px; }
+@media (max-width: 1024px) {
+  body.projects-page .container { padding: 0 12px; }
+}
+
+/* ===== Workspace Tabs ===== */
+.ws-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+.ws-tabs::-webkit-scrollbar { height: 6px; }
+.ws-tab { flex: 0 0 auto; border: 1px solid var(--border); background: var(--card); color: var(--ink); border-radius: 8px 8px 0 0; padding: 10px 16px; cursor: pointer; font-size: 0.92rem; white-space: nowrap; }
+.ws-tab.active { background: var(--card); border-bottom-color: var(--card); border-top: 3px solid var(--primary); font-weight: 600; }
+.ws-tab:not(.active) { background: #eef1f5; border-bottom: 1px solid var(--border); }
+.ws-tabs-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.ws-add-btn { flex: 0 0 auto; margin-bottom: 4px; }
+
+.ws-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; background: var(--card); border: 1px solid var(--border); border-top: none; padding: 14px 16px; margin-bottom: 16px; }
+.ws-header h2 { margin: 0; font-size: 1.1rem; }
+.ws-header .actions { display: flex; gap: 8px; }
+
+/* ===== Project toolbar ===== */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.toolbar input[type="search"] { width: auto; flex: 1 1 240px; margin-bottom: 0; }
+.toolbar select { width: auto; flex: 0 0 auto; margin-bottom: 0; min-width: 150px; }
+.toolbar .toolbar-spacer { flex: 1; }
+@media (max-width: 700px) {
+  .toolbar input[type="search"] { flex-basis: 100%; }
+}
+
+/* ===== Pagination ===== */
+.pagination { display: flex; align-items: center; justify-content: center; gap: 4px; margin-top: 16px; flex-wrap: wrap; }
+.pagination button { border: 1px solid var(--border); background: var(--card); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 0.88rem; }
+.pagination button.active { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); }
+.pagination button:disabled { opacity: .4; cursor: not-allowed; }
+.pagination .page-size { margin-left: 12px; width: auto; margin-bottom: 0; }
+
+.table-scroll { overflow-x: auto; }

@@ -9,7 +9,7 @@
 
 ---
 
-## ⚠️ SUPERSEDING UPDATE — 2026-09-26 (Round 3 — Consolidated Stabilization) — Projects UI Revision X: PENDING CEO Production Verification
+## ⚠️ SUPERSEDING UPDATE — 2026-09-26 (Round 4 — Projects Management UI Finalization) — PENDING CEO Production Verification
 
 Everything below this box was written 2026-06-25 (Phase 4 / API v1.0 freeze) and is historical —
 kept for reference. **This box is the current state. Canonical evidence lives in
@@ -17,67 +17,73 @@ kept for reference. **This box is the current state. Canonical evidence lives in
 not a duplicate; read that file for exact repro commands, tables, and evidence.**
 
 - **Branch:** `claude/loving-allen-dg3dcb` (repo on GitHub: `taohouy/pmois-app`)
-- **Round 1 (commit `bcbc3f3`):** Revision X was never deployed to Production, and its own `app.js`
-  was separately broken (SyntaxError, deleted `topbar()`/`logout()`, undefined `showSwal()`, no
-  `PUT /workspaces/{id}`/`PUT /projects/{id}` routes). Fixed; CEO deployed this package.
-- **Round 2 (commit `85a9efb`):** Deploying Round 1 still failed UAT — `GET/POST/PUT /api/v1/projects`
-  fatally errored for *every* request (pre-existing missing `use` import in `dependencies.php`,
-  predates Revision X entirely) and Workspace Activate/Deactivate failed (code assumed
-  `workspaces.status` allows `planning`/`on_hold`; real schema only allows `active`/`inactive`).
-  Both reproduced and fixed against a real MariaDB + PHP server this session installed in its own
-  sandbox (previously had neither).
-- **Round 3 (this update) — Consolidated Projects Module Stabilization, done in one continuous cycle
-  per CTO's explicit instruction not to return for another single-symptom patch:**
-  - **Found and fixed a security regression in this session's own Round 1 code**, not previously
-    reported by CTO: `PUT /api/v1/workspaces/{id}` let an ADMIN of one workspace update/deactivate a
-    **different** workspace they don't belong to (cross-tenant privilege escalation). Root cause:
-    the route's permission check validated against the caller's *own session* workspace, not the
-    *target* workspace in the route — and `WorkspaceRepositoryInterface` is a deliberately unscoped,
-    top-level repository, so nothing else caught it. Fixed by checking permission against the
-    target workspace id explicitly, mirroring a pattern the codebase's own `show()` method already
-    used with a comment warning about exactly this trap. Re-verified: cross-tenant attempt → `404`;
-    legitimate same-workspace update → still `200`; full 200-test suite still green.
-  - Full Workspace+Project API/UI contract (GET/POST/PUT both resources, Activate/Deactivate,
-    persistence-after-refresh) Dev-verified end-to-end against real HTTP + real DB.
-  - Security regression suite Dev-verified: authentication (401 when unauthenticated), workspace
-    isolation (cross-workspace GET/PUT correctly denied for both resources now), permission
-    enforcement (`MEMBER` role correctly blocked/allowed per the seeded matrix), Project-Scoped
-    Token Enforcement (own-project access works, cross-project denied, workspace-level route denied
-    for project tokens, ADMIN token unaffected), Audit Trail (every write logged), Inbound Status
-    API (submit/latest/history/cross-project-denial all still work — untouched by this revision).
-  - MJU Asset / PMOIS compatibility checked using records with the same codes as the real Production
-    projects (synthetic data in this sandbox, not the real `pmo.jaideedigital.com` DB — that
-    remains CEO's check to make). Confirmed `projects.code` has a DB-level uniqueness constraint, so
-    a duplicate `MJU-ASSET` cannot silently be created.
-  - Future project onboarding flow (Workspace → Create Project → persists → appears in list, no
-    manual SQL needed) confirmed working as-is; no token-secret UI added to Projects (out of scope
-    per CTO's instruction).
-  - UI quality: added double-submission guards on both modals and fixed a stale-async-response race
-    in the Project Edit modal.
-  - **Governance/source-of-truth correction:** `TEST-RESULTS-Projects-RevisionX.txt` and
-    `CHANGELOG-Projects-RevisionX.md` §6 both previously claimed a Production "PASS" that could not
-    have reflected a real browser session — both files now carry a correction notice at the false
-    claim's location (not a new contradictory summary elsewhere), pointing to the canonical handoff
-    note.
-  - **4 items found but deliberately not fixed** (recorded as Observation/OFI, none block Projects
-    or are security regressions): (1) `AppErrorMiddleware` never actually runs due to middleware
-    ordering — app-wide, pre-existing, not a leak; (2) the same missing-`use`-import pattern exists
-    for 5 other controllers but isn't currently triggered (autowiring saves them); (3) duplicate
-    project-code creation surfaces a generic 500 instead of a specific validation error (symptom of
-    #1); (4) Inbound Status API allows same-day duplicate submissions (pre-existing, frozen, untouched).
-  - Automated tests: **200 tests, 523 assertions, 0 failures, 0 errors, 0 skipped** (full existing
-    `tests/Integration` suite, unmodified, run against a fresh installer-built DB).
+- **Round 1 (`bcbc3f3`):** Revision X never deployed + its own `app.js` separately broken. Fixed;
+  CEO deployed this package.
+- **Round 2 (`85a9efb`):** Deploying Round 1 still failed — `GET/POST/PUT /api/v1/projects` fatally
+  errored for every request (pre-existing missing PHP import, predates Revision X) and Workspace
+  Activate/Deactivate failed (wrong status enum values in code). Both fixed and Dev-verified.
+- **Round 3 (`afe7ef3`):** Consolidated stabilization pass. Found and fixed a security regression in
+  this session's own Round 1 code (cross-tenant workspace update/deactivate — permission was checked
+  against the caller's own session workspace, not the target). Full contract + security regression
+  Dev-verified (200 tests / 523 assertions / 0 failures). 4 unrelated items recorded as Observation/
+  OFI, not fixed (app-wide `AppErrorMiddleware` ordering issue; a latent-but-inert import pattern in
+  5 other controllers; a generic-500-instead-of-validation-error symptom of the same; pre-existing
+  Inbound Status API duplicate-submission behaviour). Governance correction applied in place to
+  `TEST-RESULTS-Projects-RevisionX.txt` / `CHANGELOG-Projects-RevisionX.md` (false "Production PASS"
+  claims corrected at source, not overwritten with a new contradictory summary).
+- **Round 4 (this update) — Projects Management UI Finalization, one continuous cycle:**
+  - **Delivered the Workspace Tabs UI concept**: Workspace table + Project table replaced with
+    Workspace Tabs (navigation context, `ชื่อ (จำนวน)`, `?ws=` URL persists across refresh) + a
+    full-width Project working area (search/status filter/health filter/pagination, all composable).
+    Actions renamed to plain Thai (`เปิดใช้งาน`/`ปิดใช้งาน`/`ย้ายพื้นที่ทำงาน`, the last one now
+    actually implemented, not a placeholder). K2D self-hosted (8 `.woff2` files + real OFL license
+    text under `public/app/fonts/k2d/`, scoped to the Projects page only via `body.projects-page`,
+    zero runtime CDN dependency) — confirmed loading in a real headless-Chromium session.
+  - **Found the real root cause of the `NOT_FOUND` Activate/Deactivate defect** CEO hit after Round
+    3: not an identifier mismatch — `POST /api/v1/workspaces` never added the creator to
+    `workspace_members`, so every workspace a platform admin created (including CEO's own test
+    workspaces `VERIFY-FIX`/`TEST-AFTER-RESTART`/`SHOULD-FAIL`/`BOOTSTRAP`) left them with zero
+    membership/permission over it. Fixed: `create()` now grants the creator `ADMIN` membership via
+    the already-existing `addMember()`. Pre-existing affected workspaces need a one-time, optional,
+    idempotent SQL backfill (data-only, not a migration — see handoff note or package README).
+  - **Found and fixed a second, deeper contract gap** while wiring up multi-workspace tab viewing:
+    the whole session model binds one fixed workspace per login, so `GET /api/v1/projects` could
+    never return a second workspace's data no matter what the UI asked for. Added an optional,
+    permission-checked `?workspace_id=` override to `GET /api/v1/projects` (backward compatible —
+    omitting it is identical to before) and to `ProjectRepositoryInterface::listByWorkspace()`/
+    `findById()`. This also surfaced (and fixed) two related bugs: `create()`'s and the move-project
+    path's internal "read back what I just wrote" step both silently failed (`null`/all-null
+    response) when the target workspace differed from the session's own.
+  - **New security check added, not just a UI nicety**: moving a project to a different workspace
+    previously never verified the caller had any right to place it in the *destination* workspace —
+    fixed with the same target-workspace `PermissionResolver::can()` pattern as Round 3's fix.
+  - **Deliberately reverted**: cross-workspace project *creation*. `ProjectCreationPipeline` touches
+    several other repositories (project members, milestones, tech stack, API tokens, governance
+    auto-bind, AI assignment) all separately bound to the session's fixed workspace — making
+    creation truly cross-workspace would mean unwinding all of them, which is a real architecture
+    change, not stabilization, and risks the frozen Workspace Isolation guarantee. `POST /projects`
+    still only creates into the session's own workspace; the response now includes `workspaceId` so
+    the frontend can tell the user plainly when that differs from the tab they were viewing, instead
+    of a silent/misleading success. Reported as a known limitation per CTO's own instruction for
+    exactly this situation.
+  - Full regression re-verified after every fix, this round: **200 tests / 523 assertions / 0
+    failures / 0 errors / 0 skipped**; full interactive browser test (Playwright + headless
+    Chromium, real DOM, real API, real DB) — tabs, search, filters, pagination, add/edit/move/
+    activate-deactivate, double-submit guard — all confirmed working with **zero console errors**.
+    SweetAlert2's real CDN load could not be exercised (this sandbox's network policy blocks
+    `cdn.jsdelivr.net`); interactive tests instead used a same-DOM-API local mock of `window.Swal`,
+    exercising the exact same `app.js` code path.
 - **Consolidated deployment package for CEO** (this session has no Production FTP/SSH access):
-  `PMOIS_v2_ProjectsUI_RevisionX_DeploymentPackage_v3.zip` — supersedes both the Round 1 and Round 2
-  (v2) zips; contains all files at their current, fully-stabilized state plus a deployer README with
-  root cause, verification evidence, rollback procedure, and CEO UAT checklist.
+  `PMOIS_v2_ProjectsUI_RevisionX_DeploymentPackage_v4.zip` — supersedes v1/v2/v3; includes the font
+  assets, the optional backfill SQL, and a full deployer README.
 - **Status: PENDING — do NOT mark this revision PASS or Completed.** Only CEO's actual Production
   runtime check at `https://pmo.jaideedigital.com/app/projects.html` can change this status.
-- **Next session should:** ask whether the Round 3 (v3) package was uploaded and what the runtime
-  check showed. If CEO reports FAIL, get the exact on-page error text/browser console output first,
-  and reproduce it in a local DB before guessing — a real MariaDB was successfully installed in this
-  session's sandbox (`apt-get install -y mariadb-server`, root available) and found every defect in
-  this effort in minutes once running, versus static reading finding none of them upfront.
+- **Next session should:** ask whether the v4 package (and the optional backfill SQL, if CEO wants
+  the old test workspaces fixed too) was applied, and what the runtime check showed. If CEO reports
+  FAIL, get the exact on-page error text/console output first, and reproduce it in a local DB before
+  guessing — a real MariaDB + headless Chromium (Playwright, already installed) in this session's
+  sandbox found every defect across all four rounds within minutes of actually running the app,
+  versus static reading finding none of them upfront.
 
 ---
 

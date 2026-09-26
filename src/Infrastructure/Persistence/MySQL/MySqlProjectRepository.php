@@ -14,34 +14,71 @@ use RuntimeException;
  */
 final class MySqlProjectRepository extends BaseRepository implements ProjectRepositoryInterface
 {
-    public function findById(int $id): ?Project
+    public function findById(int $id, ?int $workspaceIdOverride = null): ?Project
     {
-        $sql = $this->applyWorkspaceScope(
-            'SELECT * FROM projects WHERE id = :id AND {{WORKSPACE_FILTER}} LIMIT 1'
-        );
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute(['id' => $id, 'workspace_id' => $this->workspaceId]);
+        if ($workspaceIdOverride === null) {
+            $sql = $this->applyWorkspaceScope(
+                'SELECT * FROM projects WHERE id = :id AND {{WORKSPACE_FILTER}} LIMIT 1'
+            );
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute(['id' => $id, 'workspace_id' => $this->workspaceId]);
+            $row = $stmt->fetch();
+
+            if ($row === false) {
+                return null;
+            }
+
+            $this->assertWorkspaceMatch($row);
+
+            return Project::fromRow($row);
+        }
+
+        // มี override — ใช้เมื่อต้องดึง project ที่เพิ่งย้าย/สร้างเข้า workspace อื่นที่ไม่ใช่
+        // workspace ของ session ปัจจุบัน (ดู doc-comment บน interface)
+        $stmt = $this->db->prepare('SELECT * FROM projects WHERE id = :id AND workspace_id = :workspace_id LIMIT 1');
+        $stmt->execute(['id' => $id, 'workspace_id' => $workspaceIdOverride]);
         $row = $stmt->fetch();
 
         if ($row === false) {
             return null;
         }
 
-        $this->assertWorkspaceMatch($row);
+        if ((int) $row['workspace_id'] !== $workspaceIdOverride) {
+            throw new RuntimeException('Workspace scope mismatch detected ใน findById() override');
+        }
 
         return Project::fromRow($row);
     }
 
-    public function listByWorkspace(): array
+    public function listByWorkspace(?int $workspaceIdOverride = null): array
     {
-        $sql = $this->applyWorkspaceScope(
-            'SELECT * FROM projects WHERE {{WORKSPACE_FILTER}} ORDER BY created_at DESC'
-        );
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute(['workspace_id' => $this->workspaceId]);
+        // ค่า default (null) = พฤติกรรมเดิมทุกประการ: list ของ workspace ปัจจุบันของ session
+        // ผ่าน applyWorkspaceScope()/assertWorkspaceMatchAll() ตามมาตรฐาน BaseRepository
+        if ($workspaceIdOverride === null) {
+            $sql = $this->applyWorkspaceScope(
+                'SELECT * FROM projects WHERE {{WORKSPACE_FILTER}} ORDER BY created_at DESC'
+            );
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute(['workspace_id' => $this->workspaceId]);
+            $rows = $stmt->fetchAll();
+
+            $this->assertWorkspaceMatchAll($rows);
+
+            return array_map(static fn (array $row): Project => Project::fromRow($row), $rows);
+        }
+
+        // มี override — ใช้สำหรับ Workspace Tabs ของหน้า Projects เพื่อดูโครงการของ workspace
+        // อื่นที่ผู้ใช้เป็นสมาชิกด้วย (นอกเหนือจาก workspace เริ่มต้นของ session) — Controller
+        // ผู้เรียกต้องเช็ค PermissionResolver กับ workspace นี้เองก่อนเรียกมาถึงจุดนี้เสมอ
+        $stmt = $this->db->prepare('SELECT * FROM projects WHERE workspace_id = :workspace_id ORDER BY created_at DESC');
+        $stmt->execute(['workspace_id' => $workspaceIdOverride]);
         $rows = $stmt->fetchAll();
 
-        $this->assertWorkspaceMatchAll($rows);
+        foreach ($rows as $row) {
+            if ((int) $row['workspace_id'] !== $workspaceIdOverride) {
+                throw new RuntimeException('Workspace scope mismatch detected ใน listByWorkspace() override');
+            }
+        }
 
         return array_map(static fn (array $row): Project => Project::fromRow($row), $rows);
     }
@@ -81,7 +118,12 @@ final class MySqlProjectRepository extends BaseRepository implements ProjectRepo
         ]);
 
         $newId = (int) $this->db->lastInsertId();
-        $project = $this->findById($newId);
+        // แก้ไข (Consolidated Stabilization): ใช้ findById() ธรรมดา (ไม่ override) ไม่ได้ถ้า
+        // $workspaceId ที่สร้างเข้าไปไม่ตรงกับ workspace ของ session ปัจจุบัน (เช่นสร้างเข้า
+        // workspace อื่นจาก Workspace Tabs) — ก่อนหน้านี้ทำให้ create() รายงาน RuntimeException
+        // "สร้างสำเร็จแต่ดึงข้อมูลกลับไม่ได้" ทั้งที่ insert สำเร็จจริง จึงต้องระบุ workspace
+        // เป้าหมายตรงๆ ผ่าน override แทนที่จะพึ่ง $this->workspaceId ของ session
+        $project = $this->findById($newId, $workspaceId);
 
         if ($project === null) {
             throw new RuntimeException('สร้าง project สำเร็จแต่ดึงข้อมูลกลับไม่ได้ — ตรวจสอบ DB');

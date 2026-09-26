@@ -6,6 +6,7 @@ namespace App\Application\Http\Controllers;
 
 use App\Application\Http\Responders\ApiResponse;
 use App\Domain\Identity\PermissionResolver;
+use App\Domain\Identity\RoleRepositoryInterface;
 use App\Domain\Workspace\WorkspaceMemberRepositoryInterface;
 use App\Domain\Workspace\WorkspaceRepositoryInterface;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -16,7 +17,8 @@ final class WorkspaceController
     public function __construct(
         private readonly WorkspaceRepositoryInterface $workspaceRepo,
         private readonly WorkspaceMemberRepositoryInterface $workspaceMemberRepo,
-        private readonly PermissionResolver $permissionResolver
+        private readonly PermissionResolver $permissionResolver,
+        private readonly RoleRepositoryInterface $roleRepo
     ) {
     }
 
@@ -55,6 +57,20 @@ final class WorkspaceController
             description: $body['description'] ?? null,
             createdByUserId: $userId
         );
+
+        // แก้ไข (พบระหว่าง Consolidated Stabilization): create() เดิมไม่เคยเพิ่มผู้สร้างเข้า
+        // workspace_members เลย — ทำให้ผู้สร้าง (แม้เป็น Platform Admin) ไม่มี role ใน
+        // workspace ที่ตัวเองเพิ่งสร้าง กลายเป็นไม่ผ่าน PermissionResolver::can() ของ
+        // update()/activate-deactivate ในภายหลัง (เห็นเป็น NOT_FOUND บน Production เพราะ
+        // update() ใช้ 404 กลบทั้งกรณี "ไม่มี workspace" และ "ไม่ใช่สมาชิก" ตาม pattern เดียวกับ
+        // show()) — เพิ่มผู้สร้างเป็นสมาชิก role ADMIN ของ workspace ที่เพิ่งสร้างทันที ให้ตรงกับ
+        // ความคาดหวังตามธรรมชาติของผู้สร้าง ไม่ใช่ architecture ใหม่ — ใช้
+        // WorkspaceMemberRepositoryInterface::addMember() ที่มีอยู่แล้ว (ใช้ pattern เดียวกับ
+        // WorkspaceMemberController::invite())
+        $adminRole = $this->roleRepo->findByCode('ADMIN');
+        if ($adminRole !== null) {
+            $this->workspaceMemberRepo->addMember($workspace->id, $userId, $adminRole->id);
+        }
 
         $auditContext = $request->getAttribute('audit_context');
         $auditContext?->record(

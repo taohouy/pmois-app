@@ -1,6 +1,6 @@
 # PMOIS v2 — Projects UI Revision X — Production Runtime Discrepancy — Root Cause & Fix
 
-**Date:** 2026-09-26 (Round 3 — Consolidated Projects Module Stabilization + First Real Project Readiness)
+**Date:** 2026-09-26 (Round 4 — Projects Management UI Finalization: Workspace Tabs redesign + deeper contract fixes found during that work)
 **Trigger:** CTO/CEO UAT finding — Production `https://pmo.jaideedigital.com/app/projects.html`.
 
 **Governance note on labels used in this document:** "Dev Verification" below means this session
@@ -411,6 +411,182 @@ suggested as separate future backlog items, not part of this revision's delivera
 
 ---
 
+## Round 4 — Projects Management UI Finalization (Workspace Tabs redesign)
+
+CTO's Round 4 request had two parts: (1) a UI concept change — replace the separate Workspace
+table + Project table with **Workspace Tabs** (navigation context) + a full-width **Project
+working area** (search/filter/pagination), with human-readable Thai copy throughout and a
+self-hosted K2D font — and (2) fix the specific defect CEO hit after the Round 3 package:
+Workspace Activate/Deactivate failing with `NOT_FOUND: ไม่พบ workspace`.
+
+### Root cause of the Production `NOT_FOUND` on Activate/Deactivate
+
+Not an identifier mismatch (numeric id vs code) — traced end-to-end and confirmed the contract was
+consistent. The actual cause: **`POST /api/v1/workspaces` (Add Workspace) never added the creator
+to `workspace_members`.** A platform admin who creates a workspace becomes its `created_by` but not
+a *member* of it. The Round 3 security fix (workspace-update permission checked against the
+*target* workspace via `PermissionResolver::can()`) is what first made this visible: `can()`
+requires an actual `workspace_members` row to grant any permission, so the workspace's own creator
+— who has no such row — is correctly-but-unhelpfully treated as a non-member and gets the same
+404 `show()`/`update()` already use for "not a member" (to avoid leaking workspace existence). This
+explains exactly what CEO saw: every workspace they created via "Add Workspace" (the `VERIFY-FIX`,
+`TEST-AFTER-RESTART`, `SHOULD-FAIL`, `BOOTSTRAP` test workspaces mentioned in the CTO's brief)
+was one they had zero membership in, so Activate/Deactivate (and Edit) on any of them failed.
+
+**Fix:** `WorkspaceController::create()` now adds the creator as an `ADMIN`-role member of the
+workspace immediately after creating it, via the **already-existing**
+`WorkspaceMemberRepositoryInterface::addMember()` (same method `WorkspaceMemberController::invite()`
+already uses) — no new repository method, no schema change. Confirmed with a real request: create
+workspace → `workspace_members` row appears immediately → Activate/Deactivate on that same
+workspace succeeds without any NOT_FOUND.
+
+**Workspaces created before this fix still lack that membership row** — `VERIFY-FIX`,
+`TEST-AFTER-RESTART`, `SHOULD-FAIL`, `BOOTSTRAP`, and possibly the original `JAIDEE` workspace if it
+too was created via this path. A one-time, idempotent, **data-only** backfill statement (no schema
+change) is provided in the final deployment package's README so these can be fixed retroactively
+without needing to delete and recreate them. Per CTO's instruction, these test workspaces are left
+alone otherwise — cleanup is a separate, later exercise, not bundled into this defect fix.
+
+### Multi-workspace access — a deeper contract gap found while building Workspace Tabs
+
+Building the tabs UI required calling `GET /api/v1/projects` for a workspace other than the one
+tied to the user's login session, and this exposed that **the whole backend session model binds
+one fixed workspace per session** (`AuthTokenMiddleware::withSession()` picks the user's
+lowest-id active membership once, at login, with no per-request override). Every workspace-scoped
+repository is constructed once per request from that same fixed `current_workspace_id`. A user who
+is a member of two workspaces could log in and see workspace A's data, but `GET /api/v1/projects`
+could never return workspace B's projects — full stop — no matter what the UI asked for. Verified
+directly: a tab for a second workspace always showed 0 projects, even when the DB had project rows
+in it.
+
+**Fix, additive and backward-compatible (existing consumers unaffected):**
+- `GET /api/v1/projects` now accepts an optional `?workspace_id=` query parameter. When given, the
+  Controller explicitly re-checks `PermissionResolver::can($userId, $thatWorkspaceId, null,
+  'project.view')` **before** querying — the permission check is against the workspace actually
+  being requested, not the session's default, closing the same class of gap Round 3's workspace-
+  update fix addressed. Omitting the parameter is 100% identical to previous behaviour.
+- `ProjectRepositoryInterface::listByWorkspace()` and `::findById()` both gained an optional
+  `?int $workspaceIdOverride` parameter (default `null` = old behaviour unchanged) so the
+  Controller can ask for a specific, permission-checked workspace's data instead of only ever the
+  session's own.
+- The Projects page frontend now fetches each visible workspace tab's projects **separately**
+  (`?workspace_id=<tab id>`, one request per tab, run in parallel) instead of fetching one dataset
+  and filtering it client-side — so the server enforces access per workspace on every load, not
+  just once. A tab the user isn't permitted to see shows a clear "ไม่มีสิทธิ์เข้าถึงพื้นที่ทำงานนี้"
+  state instead of a silently-empty or wrong list.
+- The same override was needed for `PUT /api/v1/projects/{id}` (Edit/Move) and
+  `MySqlProjectRepository::create()`'s own internal "read back what I just inserted" step —  both
+  originally called the *unscoped* `findById()` after writing into a workspace that could differ
+  from the session's, which silently returned `null` and produced either a `RuntimeException`
+  (`create()`) or a response full of `null` fields despite the write having actually succeeded
+  (`update()`'s move-workspace path). Both reproduced and fixed; `update()` no longer re-fetches at
+  all (it builds the response from values it already knows), and `create()`'s internal re-fetch now
+  passes the actual target workspace id explicitly.
+- **New security check added while wiring this up, not merely a UI nicety**: moving a project to a
+  different workspace (`PUT /api/v1/projects/{id}` with `workspaceId`) previously never checked
+  whether the caller had any right to place a project into the *destination* workspace — only that
+  they could edit the project in its *current* one. A user with `project.update` on their own
+  project could have moved it into **any** workspace_id in the system, valid or not, without being
+  a member of it. Fixed with the same `PermissionResolver::can(..., 'project.create')` pattern used
+  elsewhere in this document. Verified: an admin of workspace B cannot move workspace A's project
+  into B without being a member of B; a member of both can.
+
+### Deliberately NOT extended: cross-workspace project *creation*
+
+While building this, `POST /api/v1/projects` was briefly changed to also accept a `workspaceId` in
+the body to create directly into a non-default workspace (matching the Workspace Tabs UI's "create
+into whichever tab is open" expectation). This broke immediately with a *different* error
+(`Project ... ไม่อยู่ใน workspace context ปัจจุบัน`, thrown from
+`MySqlProjectMemberRepository`), because `ProjectCreationPipeline::create()` doesn't only insert
+into `projects` — it also calls `ProjectMemberRepository`, `MilestoneRepository`,
+`ProjectTechStackRepository`, `WorkspaceModuleSettingRepository`, `ApiTokenRepository`, governance
+auto-bind, and AI-assignment services, **every one of which is separately bound to the session's
+fixed workspace via the same DI container mechanism**. Making cross-workspace creation actually
+work would mean threading a workspace override through all of those — a real architecture change,
+not a stabilization fix, and one that touches the exact Workspace Isolation guarantees this
+revision was told to preserve.
+
+**Decision: reverted.** `POST /api/v1/projects` always creates into the session's own workspace,
+exactly as before this round — any `workspaceId` in the request body is now ignored for creation
+(it still works for the separate move/edit `PUT` endpoint, which only touches the `projects` table
+and was verified safe). The response now includes `workspaceId` so the frontend can tell when a
+project landed somewhere other than the tab the user was viewing (only possible for an admin
+viewing a non-default workspace tab) and say so plainly — "ระบบสร้างโครงการเข้าพื้นที่ทำงานหลักของ
+บัญชีคุณแทน (ข้อจำกัดปัจจุบัน...)" — rather than silently placing it in the wrong tab or claiming an
+unqualified success. This is reported here as a **known limitation**, per CTO's own instruction
+("หาก architecture ปัจจุบันไม่อนุญาตการย้าย ให้ไม่สร้าง behavior ใหม่ และรายงาน CTO") applied to the
+create case as well as the move case it was originally written for.
+
+### UI concept delivered
+
+- **Workspace Tabs** replace the Workspace table: `ชื่อ Workspace (จำนวน Project)`, active tab
+  visually distinct, horizontally scrollable if they overflow (no layout break), `+ เพิ่มพื้นที่
+  ทำงาน` button beside them. Selecting a tab persists across a refresh via a `?ws=` URL parameter
+  (not `localStorage`, so it's shareable/bookmarkable and needs no client storage capability).
+- **Workspace header** (name + `แก้ไข` / `เปิดใช้งาน`↔`ปิดใช้งาน`, the label always matching current
+  status) replaces the separate Actions column.
+- **Project working area**: full-width layout (`max-width: 1600px` on this page only, via a
+  `body.projects-page` class — every other page's layout is untouched), toolbar with search (code
+  + name, client-side, instant), status filter, health filter, all composable with the active tab
+  and with pagination (default 10/page, selectable 10/20/50, page reset on any filter change).
+  Workspace column dropped from the table (redundant with the active tab); "Dev Mode"/"Current
+  Milestone" relabelled to Thai (`รูปแบบการพัฒนา`/`Milestone ปัจจุบัน`); status/health values shown
+  as Thai badges via new Projects-page-only `projectStatusBadge()`/`projectHealthBadge()` helpers
+  (the shared `statusBadge()`/`healthBadge()` used by six other pages for unrelated status
+  vocabularies were **not** touched).
+- **Actions renamed**: `Activate/Deactivate` → `เปิดใช้งาน`/`ปิดใช้งาน` (whichever applies);
+  `Change Parent` → `ย้ายพื้นที่ทำงาน`, and — since the underlying `updateWorkspace()` capability
+  already existed and is now correctly permission-checked — actually implemented (a SweetAlert2
+  dialog with a workspace picker) instead of the previous "not implemented yet" placeholder.
+- **K2D self-hosted**: 8 `.woff2` files (Thai + Latin subsets × weights 400/500/600/700, ~124KB
+  total) fetched once from Google's own font-serving infrastructure and committed under
+  `public/app/fonts/k2d/`, with `public/app/fonts/k2d/OFL.txt` (the real SIL Open Font License 1.1
+  text for K2D) alongside them for attribution. Loaded via `@font-face` in `app.css`, scoped to
+  `body.projects-page` only (SweetAlert2 popups, inputs, selects, buttons on this page included) —
+  no other page's typography changed, and nothing is fetched from Google Fonts or any CDN at
+  runtime. Verified in a real headless-Chromium session: `document.fonts.check('16px K2D')` returns
+  `true` and the page's computed `font-family` is `K2D, "Segoe UI", ...`.
+- Double-submission guard and a stale-async-response fix (both from Round 3) remain in place and
+  were re-verified working in this round's browser test.
+
+### Verification this round
+
+All of the above was exercised with a real headless Chromium browser (Playwright, already
+preinstalled in this sandbox) driving the actual rendered page against the real PHP app and a real
+MariaDB instance — not just `curl`:
+- Tabs render with correct per-workspace counts; switching tabs shows that workspace's real
+  projects (previously showed 0 for any non-session-default workspace — this is the bug this round
+  fixed).
+- Search ("ALPHA" → exactly the 2 matching rows), status filter ("closed" → exactly 1 matching
+  row), health filter ("red" → exactly 2 matching rows), pagination (12 seeded projects → page 1
+  shows 10, page 2 shows 2, correct `‹ 1 2 ›` controls) — all confirmed against a 12-project seed
+  set with known expected results per filter.
+- Add Workspace → SweetAlert2 "สำเร็จ" → new tab appears and is auto-selected.
+- Activate/Deactivate → confirmation dialog → success dialog → button label flips correctly.
+- Add Project → workspace field pre-selected to the active tab → appears in that tab's list → tab
+  count increments.
+- Edit Project → immutable fields (name/code/dev mode) confirmed disabled in the form → progress/
+  health changes persist and render correctly.
+- Move Project → picker shows only *other* workspaces as targets → source tab count decrements,
+  destination tab count increments.
+- Double-submit guard → submit button reports `disabled` immediately on click, before the request
+  resolves.
+- Zero browser console errors across the entire interactive sequence above.
+- (SweetAlert2's own CDN load could not be exercised through this sandbox's network policy, which
+  rejects `cdn.jsdelivr.net`; the interactive tests above ran against a local, same-DOM-API mock of
+  `window.Swal.fire` — same app.js code path, same class names — the CDN's own reachability from a
+  real browser with normal internet access is outside what this sandbox can determine.)
+- Full `tests/Integration` suite re-run after every code change this round: **200 tests, 523
+  assertions, 0 failures, 0 errors, 0 skipped** (final state, fresh installer-built DB).
+- Security regression re-confirmed after every fix: unauthenticated → 401; cross-workspace GET
+  correctly denied/allowed per membership; cross-workspace workspace-update correctly denied/
+  allowed per membership; cross-workspace project-move correctly denied/allowed per membership;
+  Project-Scoped Token cross-project and workspace-level denials unchanged; Inbound Status API
+  submit/latest/history/cross-project-denial unchanged; `audit_trails` rows present for every write
+  exercised.
+
+---
+
 ## Round 1 defect table (kept for reference)
 
 | # | Defect (in `public/app/app.js` as of `d896372`) | Impact |
@@ -428,23 +604,47 @@ suggested as separate future backlog items, not part of this revision's delivera
 Fixed in commit `bcbc3f3` (all reused existing repository methods / permission codes / Audit
 mechanism — no new architecture).
 
-## Changed files (cumulative, all three rounds)
+## Changed files (cumulative, all four rounds)
 
 | File | Round | Change |
 |---|---|---|
-| `public/app/app.js` | 1, 2 & 3 | Round 1: restored `topbar()`/`logout()`, added `showSwal()`, fixed modal/Edit/syntax. Round 2: fixed workspace status values (`active`/`inactive`), fixed `api()` error surfacing to never show a bare "UNKNOWN". Round 3: double-submission guard on both modals; stale-async-response guard on the Project modal. |
-| `public/app/app.css` | 1 | Added `.modal-overlay`/`.modal-box`. |
-| `public/app/projects.html` | 1 | Removed duplicate helper/CDN definitions. |
-| `src/Application/Http/Controllers/WorkspaceController.php` | 1, 2 & 3 | Round 1: added `update()`. Round 2: fixed status validation list to `active`/`inactive`. Round 3: **security fix** — `update()` now verifies the caller's permission against the target workspace id from the route (was checking the caller's own session workspace, allowing cross-tenant updates). |
-| `src/Application/Http/Controllers/ProjectController.php` | 1 | Added `workspaceCode`/`development_mode`/`progress`/`health`/`current_milestone` to `index()`; added `update()`. (Reviewed again in Round 3 for the same class of cross-tenant bug as Workspace — confirmed already safe, no change needed.) |
+| `public/app/app.js` | 1–4 | Round 1: restored `topbar()`/`logout()`, added `showSwal()`, fixed modal/Edit/syntax. Round 2: fixed workspace status values, fixed `api()` error surfacing. Round 3: double-submission + stale-async-response guards. Round 4: full Workspace Tabs + Project working area rewrite (tabs, per-workspace data fetch via `?workspace_id=`, search/filter/pagination, Thai labels, `moveProject()` implemented for real, create-landed-elsewhere transparency message). |
+| `public/app/app.css` | 1, 4 | Round 1: `.modal-overlay`/`.modal-box`. Round 4: K2D `@font-face` (8 files) scoped to `body.projects-page`, tabs/toolbar/pagination/full-width layout styles (this page only). |
+| `public/app/projects.html` | 1, 4 | Round 1: removed duplicate helper/CDN definitions. Round 4: full markup rewrite for tabs/header/toolbar/pagination skeleton; `<body class="projects-page">`. |
+| `public/app/fonts/k2d/*.woff2` (8 files) + `OFL.txt` | 4 | New — self-hosted K2D font + its SIL OFL 1.1 license text. |
+| `src/Application/Http/Controllers/WorkspaceController.php` | 1–4 | Round 1: added `update()`. Round 2: fixed status validation list. Round 3: security fix (target-workspace permission check). Round 4: `create()` now adds the creator as an `ADMIN` member via existing `addMember()` — this is the actual fix for the `NOT_FOUND` Activate/Deactivate defect. |
+| `src/Application/Http/Controllers/ProjectController.php` | 1, 4 | Round 1: added fields to `index()`; added `update()`. Round 4: `index()` accepts permission-checked `?workspace_id=` override; `update()` adds destination-workspace permission check for project moves and no longer re-fetches after a move (builds response from known values instead); `create()`'s cross-workspace attempt was tried, found to require unwinding several other session-bound repositories, and deliberately reverted — response now includes `workspaceId` so the frontend can be transparent about this known limitation. |
+| `src/Domain/Project/ProjectRepositoryInterface.php` | 4 | `listByWorkspace()` and `findById()` both gained an optional `?int $workspaceIdOverride` parameter (default `null` = unchanged behaviour). |
+| `src/Infrastructure/Persistence/MySQL/MySqlProjectRepository.php` | 4 | Implements the above; `create()`'s internal post-insert re-fetch now passes the actual target workspace explicitly (was fatally failing for any workspace other than the session's own). |
 | `src/Config/routes.php` | 1 | Added `PUT /workspaces/{id}` and `PUT /projects/{id}`. |
-| `src/Config/dependencies.php` | 1 & 2 | Round 1: injected `WorkspaceRepositoryInterface` into `ProjectController`. Round 2: added the missing `use App\Infrastructure\Persistence\MySQL\MySqlProjectReleaseRepository;` import that was fatally breaking every `GET/POST/PUT /api/v1/projects*` request. |
-| `TEST-RESULTS-Projects-RevisionX.txt` | 3 | Added a correction notice at the top — the file's original "Result: PASS" claim could not reflect a real browser session (see Round 1/2 findings); kept below for historical record only. |
-| `CHANGELOG-Projects-RevisionX.md` | 3 | Added a correction notice above §6 "Runtime Evidence" for the same reason. |
+| `src/Config/dependencies.php` | 1, 2, 4 | Round 1: injected `WorkspaceRepositoryInterface` into `ProjectController`. Round 2: added the missing `MySqlProjectReleaseRepository` import. Round 4: injected `PermissionResolver` into `ProjectController` (for the new per-request workspace permission checks) and `RoleRepositoryInterface` into `WorkspaceController` (for the ADMIN-role membership grant on create). |
+| `TEST-RESULTS-Projects-RevisionX.txt` | 3 | Correction notice at the top. |
+| `CHANGELOG-Projects-RevisionX.md` | 3 | Correction notice above §6. |
 
-No database migration in any round — `workspaces.status` already only accepted
-`active`/`inactive` (nothing to migrate, the *code* was wrong, not the schema), and
-`workspace.update`/`project.update` permission codes were already seeded in migration `0012`.
+No database migration in any round. `workspace.update`/`project.update` permission codes were
+already seeded in migration `0012`. Round 4 introduces exactly one **optional, one-time data
+backfill** (not a migration) for workspaces created before the Round 4 membership fix — see the
+deployment package README.
+
+### Backfill SQL (optional, one-time, data-only — not a schema migration)
+
+Grants each existing workspace's own creator `ADMIN` membership, but only where that row doesn't
+already exist (safe to run more than once; changes nothing for workspaces already correct):
+
+```sql
+INSERT INTO workspace_members (workspace_id, user_id, role_id, status)
+SELECT w.id, w.created_by, (SELECT id FROM roles WHERE code = 'ADMIN'), 'active'
+FROM workspaces w
+WHERE NOT EXISTS (
+  SELECT 1 FROM workspace_members wm
+  WHERE wm.workspace_id = w.id AND wm.user_id = w.created_by
+);
+```
+
+Without this, `VERIFY-FIX`, `TEST-AFTER-RESTART`, `SHOULD-FAIL`, `BOOTSTRAP`, and any other
+workspace created before this fix will keep returning `NOT_FOUND` on Activate/Deactivate/Edit for
+their own creator — the Round 4 code fix only prevents the problem for *newly*-created workspaces
+going forward.
 
 ## Scope discipline (unchanged from Round 1)
 
