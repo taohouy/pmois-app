@@ -129,6 +129,7 @@ use App\Infrastructure\Persistence\MySQL\MySqlProjectDependencyRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlProjectEnvironmentRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlProjectMemberAssignmentRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlProjectMemberRepository;
+use App\Infrastructure\Persistence\MySQL\MySqlProjectReleaseRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlProjectRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlProjectStatusUpdateRepository;
 use App\Infrastructure\Persistence\MySQL\MySqlProjectStructureHistoryRepository;

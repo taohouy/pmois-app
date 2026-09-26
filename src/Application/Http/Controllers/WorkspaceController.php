@@ -153,12 +153,14 @@ final class WorkspaceController
             : $workspace->description;
         $status = !empty($body['status']) ? (string) $body['status'] : $workspace->status;
 
-        if (!in_array($status, ['active', 'planning', 'on_hold'], true)) {
+        // workspaces.status เป็น ENUM('active','inactive') เท่านั้น (ต่างจาก projects.status
+        // ที่มี planning/on_hold) — ค่าอื่นทำให้ MySQL/MariaDB throw "Data truncated for column"
+        if (!in_array($status, ['active', 'inactive'], true)) {
             return ApiResponse::error(
                 $response,
                 'VALIDATION_ERROR',
                 'status ไม่ถูกต้อง',
-                [['field' => 'status', 'message' => 'must be active, planning, or on_hold']],
+                [['field' => 'status', 'message' => 'must be active or inactive']],
                 422
             );
         }

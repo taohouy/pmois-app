@@ -4,12 +4,16 @@ async function api(path, opts = {}) {
     headers: { 'Accept': 'application/json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
     ...opts,
   });
-  const body = await res.json().catch(() => ({ success: false, error: { code: 'BAD_JSON', message: 'invalid response' } }));
-  if (!res.ok || body.success === false) {
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body || body.success === false) {
     if (res.status === 401) { location.href = '/app/index.html'; throw new Error('unauthorized'); }
-    const err = new Error(body.error ? body.error.message : 'request failed');
-    err.code = body.error ? body.error.code : 'UNKNOWN';
+    // ห้ามยุบ error ที่มีโครงสร้างให้เหลือแค่ "UNKNOWN" — ถ้า body ไม่มี error object
+    // (เช่น response ที่ไม่ใช่ envelope มาตรฐาน) ให้ใช้ HTTP status/statusText แทน
+    // เพื่อให้ยังเห็นเบาะแสจริงว่าเกิดอะไรขึ้น แทนที่จะจบที่ "Error: UNKNOWN" เฉยๆ
+    const err = new Error(body && body.error ? body.error.message : `HTTP ${res.status} ${res.statusText || ''}`.trim());
+    err.code = body && body.error ? body.error.code : `HTTP_${res.status}`;
     err.status = res.status;
+    console.error(`[PMOIS API] ${opts.method || 'GET'} ${path} failed`, { status: res.status, body });
     throw err;
   }
   return body.data;
@@ -124,8 +128,7 @@ function openAddWorkspaceModal(workspace = null) {
       <label>Status</label>
       <select name="status">
         <option value="active">active</option>
-        <option value="planning">planning</option>
-        <option value="on_hold">on_hold</option>
+        <option value="inactive">inactive</option>
       </select>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
         <button type="button" class="btn" id="workspaceModalCancel">ยกเลิก</button>
@@ -275,7 +278,7 @@ async function loadWorkspaces() {
       html += `<tr>
         <td>${esc(ws.code)}</td>
         <td>${esc(ws.name)}</td>
-        <td><span class="badge ${ws.status === 'active' ? 'green' : ws.status === 'planning' ? 'blue' : 'yellow'}">${esc(ws.status)}</span></td>
+        <td><span class="badge ${ws.status === 'active' ? 'green' : 'gray'}">${esc(ws.status)}</span></td>
         <td>${projectCounts[ws.id] || 0}</td>
         <td>
           <button class="btn tiny" onclick="editWorkspace(${ws.id})">Edit</button>
@@ -286,7 +289,8 @@ async function loadWorkspaces() {
     html += '</table>';
     listEl.innerHTML = html;
   } catch (err) {
-    document.getElementById('workspaceList').innerHTML = `<span class="error">Error: ${err.code || 'UNKNOWN'}</span>`;
+    console.error('[PMOIS] loadWorkspaces failed', err);
+    document.getElementById('workspaceList').innerHTML = `<span class="error">Error: ${esc(err.code || 'ERROR')} — ${esc(err.message || '')}</span>`;
   }
 }
 
@@ -325,7 +329,8 @@ async function loadProjects() {
     html += '</table>';
     listEl.innerHTML = html;
   } catch (err) {
-    document.getElementById('projectList').innerHTML = `<span class="error">Error: ${err.code || 'UNKNOWN'}</span>`;
+    console.error('[PMOIS] loadProjects failed', err);
+    document.getElementById('projectList').innerHTML = `<span class="error">Error: ${esc(err.code || 'ERROR')} — ${esc(err.message || '')}</span>`;
   }
 }
 
@@ -336,7 +341,7 @@ function editProject(id) {
 
 /* ===== Actions ===== */
 async function activateDeactivateWorkspace(workspaceId, currentStatus) {
-  const newStatus = currentStatus === 'active' ? 'on_hold' : 'active';
+  const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
   const result = await showSwal('ยืนยัน', `เปลี่ยนสถานะ Workspace เป็น "${newStatus}" ใช่หรือไม่?`, 'question', true, 'ยืนยัน');
   if (result.isConfirmed) {
     try {
