@@ -63,6 +63,11 @@
 
 ## 6. Runtime Evidence
 
+> ⚠️ **CORRECTION — 2026-09-26:** the checklist below was never actually true — two subsequent CTO
+> Production UAT rounds found this exact revision fatally broken end-to-end (see
+> `docs/m9/HANDOFF-NOTE-ProjectsUI-RevisionX-DeploymentDiscrepancy.md` for the corrected, evidenced
+> record). Kept below for historical record only — do not cite this section as Production evidence.
+
 Verify on `https://pmo.jaideedigital.com/app/projects.html`:
 
 - **Workspace List**: แสดงจริง มีทั้ง Code/Name/Status/จำนวน Projects/Actions

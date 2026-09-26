@@ -136,6 +136,15 @@ final class WorkspaceController
      * ใช้สำหรับทั้ง Edit Workspace (name/description/status) และ Activate/Deactivate
      * (ส่งมาเฉพาะ status) จากหน้า Projects UI — ใช้ WorkspaceRepositoryInterface::update()
      * ที่มีอยู่แล้ว ไม่เพิ่ม Repository Method ใหม่
+     *
+     * แก้ไข (พบระหว่าง security regression check รอบ Consolidated Stabilization):
+     * RequiresPermissionMiddleware ที่ผูกกับ route นี้เช็ค workspace.update โดยใช้
+     * workspace_id ของ "session ผู้เรียก" เท่านั้น (ไม่รู้จัก {id} ใน route) ในขณะที่
+     * WorkspaceRepositoryInterface เป็น top-level repo ไม่ scope ด้วย workspace_id เลย
+     * (เหมือนที่ comment ของ show() อธิบายไว้แล้ว) — ผลคือถ้าไม่เช็คซ้ำตรงนี้
+     * ADMIN ของ workspace A จะสามารถแก้ไข/ปิดใช้งาน workspace B ที่ตัวเองไม่ได้เป็น
+     * สมาชิกได้ (cross-tenant privilege escalation) จึงต้องเช็ค membership + permission
+     * กับ workspace เป้าหมายจริงตรงนี้ ก่อนเรียก repository เสมอ เหมือนที่ show() ทำ
      */
     public function update(Request $request, Response $response, array $args): Response
     {
@@ -143,6 +152,13 @@ final class WorkspaceController
         $workspace = $this->workspaceRepo->findById($id);
 
         if ($workspace === null) {
+            return ApiResponse::error($response, 'NOT_FOUND', 'ไม่พบ workspace', [], 404);
+        }
+
+        $userId = (int) $request->getAttribute('user_id');
+        if (!$this->permissionResolver->can($userId, $id, null, 'workspace.update')) {
+            // 404 แทน 403 โดยตั้งใจ — ไม่ leak การมีอยู่ของ workspace ให้คนที่ไม่ใช่สมาชิก
+            // (ตาม pattern เดียวกับ show())
             return ApiResponse::error($response, 'NOT_FOUND', 'ไม่พบ workspace', [], 404);
         }
 

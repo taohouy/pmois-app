@@ -150,6 +150,9 @@ function openAddWorkspaceModal(workspace = null) {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn.disabled) return; // ป้องกันกดซ้ำระหว่างรอ response
+    submitBtn.disabled = true;
     const formData = new FormData(form);
     const body = {};
     for (const [k, v] of formData.entries()) body[k] = v.trim();
@@ -167,13 +170,18 @@ function openAddWorkspaceModal(workspace = null) {
       loadWorkspaces();
       loadProjects();
     } catch (err) {
+      submitBtn.disabled = false;
       showSwal('ผิดพลาด', `${err.code}: ${err.message}`, 'error');
     }
   });
 }
 
 /* ===== Add/Edit Project Modal ===== */
+let _projectModalRequestSeq = 0;
 async function openAddProjectModal(project = null) {
+  // เปิดสองครั้งติดกัน (เช่น ดับเบิลคลิก Edit คนละแถว) แล้ว fetch workspaces เสร็จไม่ตามลำดับ —
+  // ต้องเช็คว่ายังเป็น request ล่าสุดก่อน render ทับ modal ที่เปิดใหม่กว่าไปแล้ว
+  const requestSeq = ++_projectModalRequestSeq;
   let workspacesHTML = '<option value="">— เลือก Workspace —</option>';
   try {
     const workspaces = await api('/api/v1/workspaces');
@@ -181,6 +189,8 @@ async function openAddProjectModal(project = null) {
   } catch (e) {
     workspacesHTML = '<option value="">ไม่สามารถโหลด Workspace ได้</option>';
   }
+
+  if (requestSeq !== _projectModalRequestSeq) return; // ถูกแทนที่ด้วยการเปิด modal ครั้งใหม่กว่าแล้ว
 
   const overlay = openModal(`
     <div style="border-bottom:1px solid #e0e0e0;padding-bottom:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
@@ -231,6 +241,9 @@ async function openAddProjectModal(project = null) {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn.disabled) return; // ป้องกันกดซ้ำระหว่างรอ response
+    submitBtn.disabled = true;
     const formData = new FormData(form);
     const body = {};
     for (const [k, v] of formData.entries()) { if (v !== '') body[k] = v; }
@@ -248,6 +261,7 @@ async function openAddProjectModal(project = null) {
       loadWorkspaces();
       loadProjects();
     } catch (err) {
+      submitBtn.disabled = false;
       showSwal('ผิดพลาด', `${err.code}: ${err.message}`, 'error');
     }
   });

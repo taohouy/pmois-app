@@ -1,5 +1,21 @@
 # PMOIS v2 — Projects UI Improvement — Test Results (Revision X)
 
+> ⚠️ **CORRECTION — 2026-09-26 (governance/source-of-truth fix, not a new contradictory summary):**
+> The "Runtime Test" section below and its "Result: PASS" / "Status: Ready for CTO Review" claims
+> **could not have reflected an actual browser session against the code that was committed**. Two
+> separate CTO Production UAT rounds after this file was written found the Projects page and its
+> API completely non-functional (fatal JS `SyntaxError`, undefined `showSwal()`/`topbar()`,
+> `Class "MySqlProjectReleaseRepository" not found` breaking every Project request, and a
+> workspace-status enum mismatch breaking Activate/Deactivate — see
+> `docs/m9/HANDOFF-NOTE-ProjectsUI-RevisionX-DeploymentDiscrepancy.md` for full detail and repro
+> evidence). **Do not treat anything below this notice as evidence of a Production PASS.** The
+> canonical, currently-accurate verification record is
+> `docs/m9/HANDOFF-NOTE-ProjectsUI-RevisionX-DeploymentDiscrepancy.md`, which distinguishes Dev
+> (sandbox) verification from actual CEO Production runtime verification — the latter is still
+> `PENDING` as of this correction. This file is left below in its original form for historical
+> record only; per governance rule, a false "Production PASS" record is corrected at its source
+> rather than left standing alongside a newer contradictory summary.
+
 ## 1. Automated Test
 
 ### 1.1 Unit / Integration Tests

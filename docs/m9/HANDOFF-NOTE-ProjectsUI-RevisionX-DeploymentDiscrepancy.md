@@ -1,13 +1,27 @@
 # PMOIS v2 — Projects UI Revision X — Production Runtime Discrepancy — Root Cause & Fix
 
-**Date:** 2026-09-26 (updated after CTO's second UAT round — Project List `Error: UNKNOWN` + Workspace Activate/Deactivate failure)
+**Date:** 2026-09-26 (Round 3 — Consolidated Projects Module Stabilization + First Real Project Readiness)
 **Trigger:** CTO/CEO UAT finding — Production `https://pmo.jaideedigital.com/app/projects.html`.
 
-This note has two parts: **Round 1** (why Production showed the old form at all) and **Round 2**
+**Governance note on labels used in this document:** "Dev Verification" below means this session
+ran the real application against a real MariaDB instance and real HTTP requests inside its own
+isolated sandbox — it is genuine runtime evidence, not a mock or a source-code read, but it is
+**not** Production. "Production PASS" is reserved exclusively for CEO's own runtime check against
+`https://pmo.jaideedigital.com`. Earlier documents in this repository (`TEST-RESULTS-Projects-RevisionX.txt`,
+`CHANGELOG-Projects-RevisionX.md` §6) incorrectly used Production-PASS language for what was, at
+best, unverified and at worst never-executed claims — those files have been corrected in place
+(a notice was added at the point of the false claim) rather than left standing next to this newer
+account, per governance instruction. This document is the canonical source of truth for the
+Projects UI Revision X effort going forward.
+
+This note has three parts: **Round 1** (why Production showed the old form at all), **Round 2**
 (why, after deploying the Round 1 fix, Project List still failed with `Error: UNKNOWN` and
-Activate/Deactivate still failed). Round 2's defects were found and confirmed by actually running
-the application end-to-end against a real MySQL/MariaDB instance in this session's sandbox — not
-by static reading — so the fixes below are verified, not theoretical.
+Activate/Deactivate still failed), and **Round 3** (a consolidated stabilization + security pass
+covering the full Workspace/Project contract, requested after Round 2, done in one continuous
+cycle rather than one more single-symptom patch). All defects from Round 2 onward were found and
+confirmed by actually running the application end-to-end against a real MySQL/MariaDB instance in
+this session's sandbox — not by static reading — so the fixes below are Dev-verified, not
+theoretical.
 
 ---
 
@@ -167,6 +181,236 @@ gate, not this session's local verification.
 
 ---
 
+## Round 3 — Consolidated Projects Module Stabilization + First Real Project Readiness
+
+CTO asked for one continuous pass covering the full Workspace/Project contract, security
+regression, MJU Asset compatibility, and future-project onboarding readiness, rather than another
+single-symptom patch. Done in one sandbox session, re-using and extending the Round 2 environment
+(fresh `deploy/PMOIS_v2_Database_Install.sql`, real PHP built-in server, real MariaDB).
+
+### New defect found and fixed: cross-tenant Workspace privilege escalation (security regression, introduced by this session's own Round 1 code)
+
+While running the mandatory security regression checklist, this session found that its own Round 1
+`PUT /api/v1/workspaces/{id}` endpoint let an ADMIN of **workspace A** update or deactivate
+**workspace B**, which they are not a member of. Reproduced directly:
+
+```
+# session belongs only to workspace 2 ("OTHERWS")
+$ curl -X PUT .../api/v1/workspaces/1 -b pmois_session=<ws2-admin> -d '{"status":"inactive"}'
+HTTP/1.1 200 OK
+{"success":true,"data":{"id":1,"code":"JAIDEE",...,"status":"inactive"}}   # workspace 1 belongs to someone else!
+```
+
+**Root cause:** `RequiresPermissionMiddleware('workspace.update')` bound to this route checks
+whether the caller has `workspace.update` in **their own session's workspace** — it has no way to
+know the route's `{id}` might be a *different* workspace. `WorkspaceRepositoryInterface` is
+deliberately a top-level, unscoped repository (there is nothing above "workspace" to scope by), so
+`WorkspaceController::update()` calling `$this->workspaceRepo->findById($id)` would happily find
+and update **any** workspace in the system. The codebase's own `show()` method has a comment
+explaining exactly this trap ("WorkspaceRepository เป็น top-level ไม่ scope ด้วย workspace_id ...
+Controller ต้องเป็นคนเช็ค membership เพิ่มเอง") and does re-check membership manually — `update()`,
+added in Round 1, did not follow that same pattern. This is a defect in this session's own prior
+work, not a pre-existing one; it is fixed before any package is sent to CEO for deployment.
+
+**Fix:** `WorkspaceController::update()` now calls `$this->permissionResolver->can($userId, $id,
+null, 'workspace.update')` — explicitly checking the permission against the **target** workspace
+id from the route, not the session's own workspace — and returns `404` (matching `show()`'s
+"don't leak existence" convention) if the caller isn't a permitted member of that specific
+workspace.
+
+**Verified (Dev, this sandbox):**
+- Cross-tenant attempt (ws2 ADMIN → ws1) now returns `404`, and workspace 1's status is confirmed
+  unchanged in the database.
+- Legitimate same-workspace update (ws1 ADMIN → ws1) still returns `200` and persists.
+- `MEMBER` role (lacks `workspace.update` even in their own workspace) still correctly gets `403`.
+- Full integration suite re-run after this fix: **200 tests, 523 assertions, 0 failures, 0 errors,
+  0 skipped.**
+
+`ProjectController::update()` was checked for the same class of bug and found **not** vulnerable:
+`ProjectRepositoryInterface::findById()` is workspace-scoped via `BaseRepository::applyWorkspaceScope()`
+(unlike the top-level Workspace repo), so a cross-workspace project update attempt already
+correctly returns `404` — verified directly (ws2 admin → ws1's `PMOIS-001` project → `404`).
+
+### Full Workspace/Project contract — Dev-verified end to end
+
+Seeded: 2 workspaces (to test isolation), an ADMIN and a MEMBER user in workspace 1, an ADMIN-only
+user in workspace 2, a `PMOIS-001` and `MJU-ASSET` project in workspace 1 (mirroring the real
+Production project codes), a project in workspace 2 (isolation target), one project-scoped API
+token bound to the `MJU-ASSET` project, and one workspace-level (ADMIN) API token.
+
+| Contract item | Method + Route | Result |
+|---|---|---|
+| GET Workspaces | `GET /api/v1/workspaces` | 200, real data |
+| Create Workspace | `POST /api/v1/workspaces` | 200, persisted |
+| Update Workspace | `PUT /api/v1/workspaces/{id}` | 200, persisted (own workspace only — see security fix above) |
+| Activate/Deactivate Workspace | `PUT /api/v1/workspaces/{id}` (`status`) | 200 both directions, persisted |
+| GET Projects | `GET /api/v1/projects` | 200, includes workspaceCode/development_mode/progress/health/current_milestone |
+| Create Project | `POST /api/v1/projects` | 200, persisted (see note on `cto_user_id`/`dev_user_id` below) |
+| Update Project | `PUT /api/v1/projects/{id}` | 200, persisted (progress/health/workspace only — see §"immutable fields" below) |
+| Unauthenticated access | `GET /api/v1/projects` (no session) | 401, correctly rejected |
+| Workspace isolation (GET) | ws2 admin → `GET /projects` | Returns only ws2's own project, never ws1's |
+| Workspace isolation (PUT, project) | ws2 admin → `PUT /projects/{ws1 project id}` | 404 |
+| Workspace isolation (PUT, workspace) | ws2 admin → `PUT /workspaces/{ws1 id}` | 404 (fixed this round — was 200 before the fix above) |
+| Permission enforcement | MEMBER → `PUT /workspaces/{own id}` | 403 (lacks `workspace.update`) |
+| Permission enforcement | MEMBER → `PUT /projects/{own workspace's project}` | 200 (has `project.update`) |
+| Audit Trail | every write above | row present in `audit_trails` with correct entity/action/workspace_id |
+
+### Project-Scoped Token Enforcement — regression-tested, frozen behaviour unchanged
+
+| Check | Result |
+|---|---|
+| Project-scoped token → its own project's Inbound Status endpoints (`POST/GET status`, `GET status/history`) | Succeeds |
+| Project-scoped token → a *different* project's status endpoints | `403 FORBIDDEN — "Token is not authorized for this project"` |
+| Project-scoped token → workspace-level route (`GET /workspaces`) | `403 FORBIDDEN — "Project-scoped token cannot access workspace-level resources"` |
+| Workspace-level (ADMIN) token → `GET /workspaces` | Succeeds |
+
+None of this session's changes touch `ProjectScopeMiddleware`, `AuthTokenMiddleware`, or the token
+tables — this table confirms the frozen behaviour still holds, not that it was changed.
+
+### Inbound Status API — regression-tested, untouched by this revision
+
+| Check | Result |
+|---|---|
+| `POST /projects/{id}/status` (submit, own project, project-scoped token) | `201 Created` |
+| `GET /projects/{id}/status` (latest) | `200`, returns the submitted report |
+| `GET /projects/{id}/status/history` | `200`, returns full history |
+| `POST /projects/{other id}/status` (cross-project, project-scoped token) | `403 FORBIDDEN` |
+| `GET /projects/{other id}/status` (cross-project) | `403 FORBIDDEN` |
+
+`ProjectStatusUpdateController` and its repository were not modified in any round of this work —
+this table exists purely to confirm no incidental breakage from the Projects UI changes, and finds
+none. (Observation, not a defect: submitting twice for the same `report_date` currently creates two
+rows rather than being deduplicated — this is pre-existing behaviour of the frozen v1.0 endpoint,
+outside this revision's scope, and is not something this session introduced or was asked to change.)
+
+### MJU Asset / existing real project compatibility
+
+The Projects UI and API were verified against records using the **exact same project code
+(`MJU-ASSET`) and a `PMOIS`-named project** that mirror what already exists in Production, to
+confirm the fixed code displays and operates on pre-existing real-shaped records correctly, not
+just newly-created synthetic ones:
+- Both appear in `GET /api/v1/projects` with correct workspace/status/progress/health.
+- `projects.code` has a DB-level `UNIQUE(workspace_id, code)` constraint (confirmed via
+  `SHOW CREATE TABLE projects`) — attempting to create a second `MJU-ASSET` in the same workspace
+  is rejected (currently as a generic 500 rather than a clean `VALIDATION_ERROR` — see "Observation"
+  below; the rejection itself works, so no duplicate can silently be created).
+- This session did **not** create any project against the real `pmo.jaideedigital.com` database and
+  has no way to; all `MJU-ASSET`/`PMOIS` records used here were synthetic rows in this sandbox's
+  local MariaDB, created solely to mirror the real records' shape for this test. CEO's Production
+  check remains the only way to confirm the *actual* `MJU-ASSET` (Production project id `4`) and
+  PMOIS records render correctly.
+
+**Observation (not fixed, recorded for backlog):** a duplicate project-code creation attempt
+currently surfaces as a generic `{"message":"Slim Application Error"}` (HTTP 500) instead of a
+clean `VALIDATION_ERROR`, because of the `AppErrorMiddleware` ordering issue described below — the
+uniqueness constraint itself works (no duplicate is created), only the error message shown to the
+user is generic rather than specific.
+
+### Future Project onboarding flow — confirmed, no manual SQL required
+
+`Workspace → Create Project → Persist → appears in Project List` was walked end-to-end via the
+running API and requires no manual SQL/migration under normal operation — `POST /api/v1/projects`
+alone is sufficient. Token issuance for a newly-created project (via the existing, already-approved
+`ApiTokenController` flow, unchanged by this revision) was exercised at the data level in this
+session's seed script (inserting an `api_tokens` row with `project_id` set) to regression-test
+enforcement, not as a new UI feature — per CTO's instruction, no token-secret UI was added to
+Projects in this revision.
+
+**Note (carried over, still relevant):** `POST /api/v1/projects` requires either
+`cto_user_id`/`dev_user_id` in the body or a `workspace_default_settings` row for the workspace
+(pre-existing `ProjectCreationPipeline` behavior, unrelated to this fix). A future real project's
+workspace should have its `workspace_default_settings` configured (via the existing, unmodified
+`WorkspaceDefaultSettingsController`) for the "CEO กรอกน้อยที่สุด" flow to work without extra
+fields — this is existing, approved behaviour, not something introduced or changed here.
+
+### Immutable Project fields — kept immutable, documented rather than newly editable
+
+Per CTO's instruction not to invent new repository methods just to make every field editable: Name,
+Code, and Development Mode remain **not editable** via the Project Edit modal (inputs are rendered
+`disabled` in edit mode, and the backend `PUT /api/v1/projects/{id}` silently ignores those fields
+even if a client sent them anyway — verified by reading `ProjectController::update()`, which only
+ever reads `progress`, `health`, and `workspaceId` from the request body). This is an intentional,
+documented limitation of the current approved architecture, not an oversight: there is no
+`ProjectRepositoryInterface` method to rename/re-code a project, and adding one was judged to be
+new architecture, which this revision was told to avoid.
+
+### UI runtime quality fixes (this round)
+
+- **Double-submission prevention:** both the Workspace and Project modal's submit button now
+  disables itself for the duration of the request (re-enabled only if the request fails, since a
+  successful save closes the modal). Previously, rapid double-click could fire two create/update
+  requests.
+- **Stale-modal race fix:** `openAddProjectModal()` fetches the workspace list (for the dropdown)
+  before rendering — if a user opened Edit on two different project rows in quick succession, the
+  slower of the two async fetches could finish last and overwrite the newer modal with stale data.
+  A request-sequence guard now discards any modal render whose fetch resolves after a newer
+  `openAddProjectModal()` call has already started.
+- Confirmed no `integrity`/SRI attribute remains on the SweetAlert2 `<script>` tag (the Round 1 fix
+  already removed the incorrect hash that was silently blocking the CDN script).
+
+### Error handling standard — re-verified with `APP_DEBUG=false` (matching Production's expected setting)
+
+- 404 (bad route), 401 (no/invalid session), 404 (nonexistent resource id), and 422 (validation,
+  including malformed JSON body) all return clean, structured responses with **no stack trace, no
+  file path, no SQL text, and no secrets** — verified directly against the running app.
+- **Observation, not fixed (pre-existing, app-wide, not Projects-specific):** `AppErrorMiddleware`
+  — whose entire purpose is to convert any uncaught exception into the standard
+  `{success:false,error:{code,message}}` envelope — never actually runs for exceptions thrown
+  during normal route handling. Slim's own `ErrorMiddleware` (registered one line earlier in
+  `public/index.php`, making it the *inner* layer relative to `AppErrorMiddleware`) catches the
+  exception first and converts it into Slim's own generic response
+  (`{"message":"Slim Application Error"}` for JSON, or its own generic HTML page) before it can ever
+  reach `AppErrorMiddleware`'s `catch` block. **This is not a security leak** — Slim's own default
+  response is equally generic and contains no stack trace, path, or secret, confirmed above — but
+  it means unhandled exceptions (e.g. a DB constraint violation on duplicate project code) show a
+  slightly less specific message than the codebase's own envelope design intends. This predates
+  every round of this work (the middleware was added in the earlier "M9 UAT Runtime Fix Revision 1"
+  commit) and affects the entire API, not just Projects/Workspaces. Per CTO's instruction to record
+  unrelated findings rather than fix them in this revision, this is **not fixed here** — it does
+  not block the Projects module (every error path tested still returns a safe, if generic, response)
+  and is not a new security regression. Recommended as a follow-up revision: reorder
+  `public/index.php` so `AppErrorMiddleware` is registered *before* `addErrorMiddleware()` (making
+  it the effective inner boundary Slim's middleware needs), or fold its generic-response logic
+  directly into a custom Slim error handler.
+- `app.js`'s `api()` helper (fixed in Round 2) already degrades gracefully against this — it now
+  shows `HTTP_500 — Slim Application Error` instead of a bare `UNKNOWN` when this generic path is
+  hit, which is informative enough to act on without leaking anything.
+
+### Automated test result (exact counts, per CTO's requirement not to summarize as bare "PASS")
+
+```
+PHPUnit 10.5.63
+Tests: 200, Assertions: 523, Failures: 0, Errors: 0, Skipped: 0, Incomplete: 0
+```
+Run against a freshly-installed database (`deploy/PMOIS_v2_Database_Install.sql`, no manual seed
+data — the manual seed data described above was added separately, after this run, purely for the
+manual `curl` contract walk) in this session's own sandbox MariaDB (not Production). This is the
+full existing `tests/Integration` suite, unmodified — it covers M1 through M9 (Governance,
+Knowledge, RFC, Decision Register, Automation, Analytics, Auth, Workspace Scoping, Permission
+Resolver, Revision Workflow, and more), not only Projects/Workspaces, confirming no regression
+elsewhere in the frozen v1.0 surface.
+
+### Observation / OFI list (recorded, not modified — per "do not touch unrelated modules")
+
+1. `AppErrorMiddleware` never actually runs for in-request exceptions due to middleware ordering
+   (see above) — app-wide, pre-existing, not a security leak, not Projects-specific.
+2. `src/Config/dependencies.php` has the same "bare class name in a namespace-less file" mistake
+   (that broke `ProjectReleaseRepositoryInterface` in Round 2) for `AnalyticsController`,
+   `AutomationController`, `KnowledgeController`, `AuditController`, and `PlatformController` — not
+   currently broken in practice (PHP-DI's autowiring silently resolves the real class instead,
+   confirmed by all 200 tests passing including those modules' own suites), but fragile. Left alone
+   per scope discipline.
+3. Duplicate project-code creation surfaces as a generic 500 rather than a specific
+   `VALIDATION_ERROR` (a symptom of Observation #1) — the uniqueness constraint itself correctly
+   prevents the duplicate; only the error message is generic.
+4. Inbound Status API allows multiple `report_date`-duplicate submissions per project rather than
+   deduplicating — pre-existing, frozen v1.0 behaviour, unmodified and unaffected by this revision.
+
+None of these four block the Projects module or constitute a new security regression; all are
+suggested as separate future backlog items, not part of this revision's deliverable.
+
+---
+
 ## Round 1 defect table (kept for reference)
 
 | # | Defect (in `public/app/app.js` as of `d896372`) | Impact |
@@ -184,19 +428,21 @@ gate, not this session's local verification.
 Fixed in commit `bcbc3f3` (all reused existing repository methods / permission codes / Audit
 mechanism — no new architecture).
 
-## Changed files (cumulative, both rounds)
+## Changed files (cumulative, all three rounds)
 
 | File | Round | Change |
 |---|---|---|
-| `public/app/app.js` | 1 & 2 | Round 1: restored `topbar()`/`logout()`, added `showSwal()`, fixed modal/Edit/syntax. Round 2: fixed workspace status values (`active`/`inactive`), fixed `api()` error surfacing to never show a bare "UNKNOWN". |
+| `public/app/app.js` | 1, 2 & 3 | Round 1: restored `topbar()`/`logout()`, added `showSwal()`, fixed modal/Edit/syntax. Round 2: fixed workspace status values (`active`/`inactive`), fixed `api()` error surfacing to never show a bare "UNKNOWN". Round 3: double-submission guard on both modals; stale-async-response guard on the Project modal. |
 | `public/app/app.css` | 1 | Added `.modal-overlay`/`.modal-box`. |
 | `public/app/projects.html` | 1 | Removed duplicate helper/CDN definitions. |
-| `src/Application/Http/Controllers/WorkspaceController.php` | 1 & 2 | Round 1: added `update()`. Round 2: fixed status validation list to `active`/`inactive`. |
-| `src/Application/Http/Controllers/ProjectController.php` | 1 | Added `workspaceCode`/`development_mode`/`progress`/`health`/`current_milestone` to `index()`; added `update()`. |
+| `src/Application/Http/Controllers/WorkspaceController.php` | 1, 2 & 3 | Round 1: added `update()`. Round 2: fixed status validation list to `active`/`inactive`. Round 3: **security fix** — `update()` now verifies the caller's permission against the target workspace id from the route (was checking the caller's own session workspace, allowing cross-tenant updates). |
+| `src/Application/Http/Controllers/ProjectController.php` | 1 | Added `workspaceCode`/`development_mode`/`progress`/`health`/`current_milestone` to `index()`; added `update()`. (Reviewed again in Round 3 for the same class of cross-tenant bug as Workspace — confirmed already safe, no change needed.) |
 | `src/Config/routes.php` | 1 | Added `PUT /workspaces/{id}` and `PUT /projects/{id}`. |
 | `src/Config/dependencies.php` | 1 & 2 | Round 1: injected `WorkspaceRepositoryInterface` into `ProjectController`. Round 2: added the missing `use App\Infrastructure\Persistence\MySQL\MySqlProjectReleaseRepository;` import that was fatally breaking every `GET/POST/PUT /api/v1/projects*` request. |
+| `TEST-RESULTS-Projects-RevisionX.txt` | 3 | Added a correction notice at the top — the file's original "Result: PASS" claim could not reflect a real browser session (see Round 1/2 findings); kept below for historical record only. |
+| `CHANGELOG-Projects-RevisionX.md` | 3 | Added a correction notice above §6 "Runtime Evidence" for the same reason. |
 
-No database migration in either round — `workspaces.status` already only accepted
+No database migration in any round — `workspaces.status` already only accepted
 `active`/`inactive` (nothing to migrate, the *code* was wrong, not the schema), and
 `workspace.update`/`project.update` permission codes were already seeded in migration `0012`.
 

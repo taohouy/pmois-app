@@ -9,59 +9,75 @@
 
 ---
 
-## ⚠️ SUPERSEDING UPDATE — 2026-09-26 (Round 2) — Projects UI Revision X: Production Runtime Discrepancy (OPEN, pending CEO verification)
+## ⚠️ SUPERSEDING UPDATE — 2026-09-26 (Round 3 — Consolidated Stabilization) — Projects UI Revision X: PENDING CEO Production Verification
 
 Everything below this box was written 2026-06-25 (Phase 4 / API v1.0 freeze) and is historical —
-kept for reference. **This box is the current state.**
+kept for reference. **This box is the current state. Canonical evidence lives in
+`docs/m9/HANDOFF-NOTE-ProjectsUI-RevisionX-DeploymentDiscrepancy.md` — this box is a pointer/summary,
+not a duplicate; read that file for exact repro commands, tables, and evidence.**
 
 - **Branch:** `claude/loving-allen-dg3dcb` (repo on GitHub: `taohouy/pmois-app`)
-- **Round 1 (commit `bcbc3f3`):** Fixed the reason Production showed the old single-form page at
-  all — Revision X (`d896372`) was never deployed, and even if it had been, its own `app.js` was
-  fatally broken (SyntaxError, deleted `topbar()`/`logout()`, undefined `showSwal()`, no
-  `PUT /workspaces/{id}`/`PUT /projects/{id}` backend routes). CEO deployed this package.
-- **Round 2 result — still UAT FAIL, two NEW defects found:** after deploying Round 1, CEO reported
-  Project List showing `Error: UNKNOWN` and Workspace Activate/Deactivate failing. This session
-  installed a real MariaDB + PHP server in its sandbox (previously had neither) and reproduced both
-  failures against real HTTP requests + real DB, then fixed them:
-  - **`GET/POST/PUT /api/v1/projects` fatally errored for every request** — pre-existing bug from
-    the original `23256f3` baseline (predates Revision X entirely): `src/Config/dependencies.php`
-    was missing one `use` import (`MySqlProjectReleaseRepository`), and since that file has no
-    namespace, PHP couldn't find the class — `Error: Class "MySqlProjectReleaseRepository" not
-    found`. This broke `ProjectController` entirely (list, create, close), not just the list view.
-    One-line fix, verified with a real request afterward (200 OK, both `PMOIS-001` and `MJU-ASSET`
-    now returned).
-  - **Workspace Activate/Deactivate always failed** — the Revision X design (and this session's own
-    Round 1 code) assumed `workspaces.status` could be `active`/`planning`/`on_hold`, but the real
-    DB schema only allows `ENUM('active','inactive')` (the 3-value enum belongs to
-    `projects.status`, not `workspaces.status`). Every activate/deactivate attempt sent `on_hold` →
-    `PDOException: Data truncated for column 'status'` → 500. Fixed in 3 files (frontend select
-    options + toggle logic + backend validation) to use `active`/`inactive` throughout. Verified
-    with real PUT requests toggling both directions successfully.
-  - Also fixed (proactively, per CTO's instruction not to reduce structured errors to "UNKNOWN"):
-    `app.js`'s `api()` helper no longer hardcodes the literal string `'UNKNOWN'` — it now surfaces
-    the real HTTP status/message and logs full details to the browser console.
-  - Full detail, including the exact repro commands and server log output:
-    `docs/m9/HANDOFF-NOTE-ProjectsUI-RevisionX-DeploymentDiscrepancy.md`
-- **Verification this round (real, not static):** fresh DB from `deploy/PMOIS_v2_Database_Install.sql`
-  → full PHPUnit integration suite **200 tests / 523 assertions / 0 failures** → manual `curl`
-  walk of the entire contract (GET/POST/PUT workspaces, GET/POST/PUT projects, persistence-after-
-  refresh) against the real running app → negative-permission test with a `MEMBER`-role session
-  confirming `PermissionResolver`/Workspace Scope still correctly blocks `workspace.update` while
-  allowing `project.update` → `audit_trails` table inspected directly to confirm every write is
-  still logged. **Still not verified: the actual Production server** — this was a sandbox DB with
-  synthetic data, not `pmo.jaideedigital.com`.
-- **Consolidated deployment package prepared for CEO** (this session has no Production FTP/SSH
-  access): `PMOIS_v2_ProjectsUI_RevisionX_DeploymentPackage.zip` (v2) — supersedes the Round 1 zip,
-  contains all 7 files at their current (Round 1 + Round 2) state plus the deployer README.
-- **Status: PENDING — do NOT mark this revision PASS or Completed.** Two rounds of CTO UAT have
-  already failed after a "verified" fix; the next status change must come from CEO's actual
-  Production runtime check, not from this session's local verification, however thorough.
-- **Next session should:** ask whether the Round 2 package was uploaded and what the runtime check
-  showed before doing anything else on Projects UI. If CEO reports FAIL again, resist the urge to
-  guess — get the exact on-page error text and/or browser console output first, and prefer
-  reproducing it in a local DB (a real MariaDB was successfully installed in this session's sandbox
-  — `apt-get install -y mariadb-server`, root available) over re-reading code, since static reading
-  missed both Round 2 defects and running the app found them in minutes.
+- **Round 1 (commit `bcbc3f3`):** Revision X was never deployed to Production, and its own `app.js`
+  was separately broken (SyntaxError, deleted `topbar()`/`logout()`, undefined `showSwal()`, no
+  `PUT /workspaces/{id}`/`PUT /projects/{id}` routes). Fixed; CEO deployed this package.
+- **Round 2 (commit `85a9efb`):** Deploying Round 1 still failed UAT — `GET/POST/PUT /api/v1/projects`
+  fatally errored for *every* request (pre-existing missing `use` import in `dependencies.php`,
+  predates Revision X entirely) and Workspace Activate/Deactivate failed (code assumed
+  `workspaces.status` allows `planning`/`on_hold`; real schema only allows `active`/`inactive`).
+  Both reproduced and fixed against a real MariaDB + PHP server this session installed in its own
+  sandbox (previously had neither).
+- **Round 3 (this update) — Consolidated Projects Module Stabilization, done in one continuous cycle
+  per CTO's explicit instruction not to return for another single-symptom patch:**
+  - **Found and fixed a security regression in this session's own Round 1 code**, not previously
+    reported by CTO: `PUT /api/v1/workspaces/{id}` let an ADMIN of one workspace update/deactivate a
+    **different** workspace they don't belong to (cross-tenant privilege escalation). Root cause:
+    the route's permission check validated against the caller's *own session* workspace, not the
+    *target* workspace in the route — and `WorkspaceRepositoryInterface` is a deliberately unscoped,
+    top-level repository, so nothing else caught it. Fixed by checking permission against the
+    target workspace id explicitly, mirroring a pattern the codebase's own `show()` method already
+    used with a comment warning about exactly this trap. Re-verified: cross-tenant attempt → `404`;
+    legitimate same-workspace update → still `200`; full 200-test suite still green.
+  - Full Workspace+Project API/UI contract (GET/POST/PUT both resources, Activate/Deactivate,
+    persistence-after-refresh) Dev-verified end-to-end against real HTTP + real DB.
+  - Security regression suite Dev-verified: authentication (401 when unauthenticated), workspace
+    isolation (cross-workspace GET/PUT correctly denied for both resources now), permission
+    enforcement (`MEMBER` role correctly blocked/allowed per the seeded matrix), Project-Scoped
+    Token Enforcement (own-project access works, cross-project denied, workspace-level route denied
+    for project tokens, ADMIN token unaffected), Audit Trail (every write logged), Inbound Status
+    API (submit/latest/history/cross-project-denial all still work — untouched by this revision).
+  - MJU Asset / PMOIS compatibility checked using records with the same codes as the real Production
+    projects (synthetic data in this sandbox, not the real `pmo.jaideedigital.com` DB — that
+    remains CEO's check to make). Confirmed `projects.code` has a DB-level uniqueness constraint, so
+    a duplicate `MJU-ASSET` cannot silently be created.
+  - Future project onboarding flow (Workspace → Create Project → persists → appears in list, no
+    manual SQL needed) confirmed working as-is; no token-secret UI added to Projects (out of scope
+    per CTO's instruction).
+  - UI quality: added double-submission guards on both modals and fixed a stale-async-response race
+    in the Project Edit modal.
+  - **Governance/source-of-truth correction:** `TEST-RESULTS-Projects-RevisionX.txt` and
+    `CHANGELOG-Projects-RevisionX.md` §6 both previously claimed a Production "PASS" that could not
+    have reflected a real browser session — both files now carry a correction notice at the false
+    claim's location (not a new contradictory summary elsewhere), pointing to the canonical handoff
+    note.
+  - **4 items found but deliberately not fixed** (recorded as Observation/OFI, none block Projects
+    or are security regressions): (1) `AppErrorMiddleware` never actually runs due to middleware
+    ordering — app-wide, pre-existing, not a leak; (2) the same missing-`use`-import pattern exists
+    for 5 other controllers but isn't currently triggered (autowiring saves them); (3) duplicate
+    project-code creation surfaces a generic 500 instead of a specific validation error (symptom of
+    #1); (4) Inbound Status API allows same-day duplicate submissions (pre-existing, frozen, untouched).
+  - Automated tests: **200 tests, 523 assertions, 0 failures, 0 errors, 0 skipped** (full existing
+    `tests/Integration` suite, unmodified, run against a fresh installer-built DB).
+- **Consolidated deployment package for CEO** (this session has no Production FTP/SSH access):
+  `PMOIS_v2_ProjectsUI_RevisionX_DeploymentPackage_v3.zip` — supersedes both the Round 1 and Round 2
+  (v2) zips; contains all files at their current, fully-stabilized state plus a deployer README with
+  root cause, verification evidence, rollback procedure, and CEO UAT checklist.
+- **Status: PENDING — do NOT mark this revision PASS or Completed.** Only CEO's actual Production
+  runtime check at `https://pmo.jaideedigital.com/app/projects.html` can change this status.
+- **Next session should:** ask whether the Round 3 (v3) package was uploaded and what the runtime
+  check showed. If CEO reports FAIL, get the exact on-page error text/browser console output first,
+  and reproduce it in a local DB before guessing — a real MariaDB was successfully installed in this
+  session's sandbox (`apt-get install -y mariadb-server`, root available) and found every defect in
+  this effort in minutes once running, versus static reading finding none of them upfront.
 
 ---
 
