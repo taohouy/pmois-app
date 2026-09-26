@@ -468,7 +468,8 @@ return [
     // ===== Controllers (M1 Phase 1 + R6) =====
     ProjectController::class => fn (ContainerInterface $c) => new ProjectController(
         $c->get(ProjectRepositoryInterface::class),
-        $c->get(ProjectCreationPipeline::class)
+        $c->get(ProjectCreationPipeline::class),
+        $c->get(WorkspaceRepositoryInterface::class)
     ),
     AiAssignmentController::class => fn (ContainerInterface $c) => new AiAssignmentController(
         $c->get(AiAssignmentService::class)

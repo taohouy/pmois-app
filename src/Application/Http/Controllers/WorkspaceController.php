@@ -128,4 +128,57 @@ final class WorkspaceController
             'status' => $workspace->status,
         ]);
     }
+
+    /**
+     * PUT /api/v1/workspaces/{id}
+     * Permission: workspace.update
+     *
+     * ใช้สำหรับทั้ง Edit Workspace (name/description/status) และ Activate/Deactivate
+     * (ส่งมาเฉพาะ status) จากหน้า Projects UI — ใช้ WorkspaceRepositoryInterface::update()
+     * ที่มีอยู่แล้ว ไม่เพิ่ม Repository Method ใหม่
+     */
+    public function update(Request $request, Response $response, array $args): Response
+    {
+        $id = (int) $args['id'];
+        $workspace = $this->workspaceRepo->findById($id);
+
+        if ($workspace === null) {
+            return ApiResponse::error($response, 'NOT_FOUND', 'ไม่พบ workspace', [], 404);
+        }
+
+        $body = (array) $request->getParsedBody();
+        $name = !empty($body['name']) ? (string) $body['name'] : $workspace->name;
+        $description = array_key_exists('description', $body)
+            ? ($body['description'] !== '' ? (string) $body['description'] : null)
+            : $workspace->description;
+        $status = !empty($body['status']) ? (string) $body['status'] : $workspace->status;
+
+        if (!in_array($status, ['active', 'planning', 'on_hold'], true)) {
+            return ApiResponse::error(
+                $response,
+                'VALIDATION_ERROR',
+                'status ไม่ถูกต้อง',
+                [['field' => 'status', 'message' => 'must be active, planning, or on_hold']],
+                422
+            );
+        }
+
+        $this->workspaceRepo->update($id, $name, $description, $status);
+
+        $auditContext = $request->getAttribute('audit_context');
+        $auditContext?->record(
+            entityType: 'workspace',
+            entityId: $id,
+            beforeValue: ['name' => $workspace->name, 'description' => $workspace->description, 'status' => $workspace->status],
+            afterValue: ['name' => $name, 'description' => $description, 'status' => $status]
+        );
+
+        return ApiResponse::success($response, [
+            'id' => $id,
+            'code' => $workspace->code,
+            'name' => $name,
+            'description' => $description,
+            'status' => $status,
+        ]);
+    }
 }

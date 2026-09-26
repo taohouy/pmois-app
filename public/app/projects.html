@@ -25,51 +25,6 @@
 <script>
 topbar('projects');
 
-/* ===== SweetAlert2 Config ===== */
-const Swal = window.Swal || Swal;
-
-/* ===== API Helper ===== */
-async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    headers: { 'Accept': 'application/json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
-    ...opts,
-  });
-  const body = await res.json().catch(() => ({ success: false, error: { code: 'BAD_JSON', message: 'invalid response' } }));
-  if (!res.ok || body.success === false) {
-    if (res.status === 401) { location.href = '/app/index.html'; throw new Error('unauthorized'); }
-    const err = new Error(body.error ? body.error.message : 'request failed');
-    err.code = body.error ? body.error.code : 'UNKNOWN';
-    err.status = res.status;
-    throw err;
-  }
-  return body.data;
-}
-
-async function requireSession() {
-  try { await api('/api/v1/dashboards/workspace'); } catch (e) { location.href = '/app/index.html'; throw e; }
-}
-
-function esc(v) {
-  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": " " }[c]));
-}
-
-function badge(text, kind) { return `<span class="badge ${kind}">${esc(text)}</span>`; }
-function healthBadge(h) { return badge(h, h === 'green' ? 'green' : h === 'yellow' ? 'yellow' : 'red'); }
-function statusBadge(s) {
-  const map = { active: 'green', planning: 'blue', on_hold: 'yellow', closed: 'gray', submitted: 'blue', cto_approved: 'green', cto_rejected: 'red', committed: 'green' };
-  return badge(s.replaceAll('_', ' '), map[s] || 'gray');
-}
-
-/* ===== SweetAlert2 CDN ===== */
-(function() {
-  const script = document.createElement('script');
-  script.src = 'https://cdn.jsdelivr.net/npm/sweetalert2@11';
-  script.integrity = 'sha384-pQQkDk69Z6G+5jZRR+k6xjz0Q+5c6cLHuetTZNell';
-  script.crossOrigin = 'anonymous';
-  script.onload = () => { /* SweetAlert2 loaded */ };
-  document.head.appendChild(script);
-})();
-
 /* ===== Init on Load ===== */
 (async () => {
   await requireSession();

@@ -89,6 +89,8 @@ return function (App $app, ContainerInterface $container): void {
             ->add(new RequiresPermissionMiddleware($resolver, 'workspace.view'));
         $group->get('/workspaces/{id}', WorkspaceController::class . ':show')
             ->add(new RequiresPermissionMiddleware($resolver, 'workspace.view'));
+        $group->put('/workspaces/{id}', WorkspaceController::class . ':update')
+            ->add(new RequiresPermissionMiddleware($resolver, 'workspace.update'));
 
         $group->get('/workspace-members', WorkspaceMemberController::class . ':index')
             ->add(new RequiresPermissionMiddleware($resolver, 'workspace.view'));
@@ -105,6 +107,8 @@ return function (App $app, ContainerInterface $container): void {
             ->add(new RequiresPermissionMiddleware($resolver, 'project.create'));
         $group->put('/projects/{id}/close', ProjectController::class . ':close')
             ->add(new RequiresPermissionMiddleware($resolver, 'project.close', 'id'));
+        $group->put('/projects/{id}', ProjectController::class . ':update')
+            ->add(new RequiresPermissionMiddleware($resolver, 'project.update', 'id'));
 
         // ===== Inbound Status API =====
         $group->post('/projects/{project_id}/status', ProjectStatusUpdateController::class . ':submit')
