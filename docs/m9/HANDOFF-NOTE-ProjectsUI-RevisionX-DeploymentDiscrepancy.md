@@ -646,9 +646,114 @@ workspace created before this fix will keep returning `NOT_FOUND` on Activate/De
 their own creator — the Round 4 code fix only prevents the problem for *newly*-created workspaces
 going forward.
 
+## Round 5 — M3 Project Management Completion Gate (`79faac9`)
+
+The Completion Gate directive required building a Feature Inventory from the repository's own
+Source-of-Truth design docs (not memory/assumption) before touching anything further. Reading
+`M0-Design/Revision6/R6-05-Project-Creation-Flow-Revision6.md` in full as part of that inventory
+surfaced that Round 4's ad-hoc "ย้ายพื้นที่ทำงาน" (move workspace) handling — added directly to
+`PUT /api/v1/projects/{id}` — **duplicated a separate, pre-existing, already-approved mechanism**
+that the ad-hoc version never used: `PATCH /api/v1/projects/{id}/structure` →
+`ProjectStructureController` → `ProjectStructureService`, which has its own dedicated audit table
+(`project_structure_history`, distinct from the generic `audit_trails` table) and its own business
+rules (circular-hierarchy checks, project-code-conflict checks). R6-05 states explicitly: *"Move /
+Change Parent / Promote flows: unchanged from R5 §2–4 (permission `project.structure.update`,
+history via `project_structure_history`, `CIRCULAR_HIERARCHY` / `PROJECT_CODE_CONFLICT` rules, ID
+immutability verified)"* — confirming this canonical flow, not the Round 4 ad-hoc one, is the
+approved design, and confirming "Change Parent/Move Project" is itself approved M3 scope.
+
+### Two real, pre-existing defects found in the canonical (but previously unused-by-UI) flow
+
+Neither of these was introduced by this session — both existed in `ProjectStructureService.php` /
+`ProjectStructureController.php` before this engagement began, invisible until the UI actually
+started exercising that code path this round.
+
+| # | Defect | Effect |
+|---|---|---|
+| 1 | `ProjectStructureService`'s `moveWorkspace()`, `changeParent()`, and `promoteToRoot()` all hardcoded `changedBy: 0` when writing to `project_structure_history` | Every structural change ever recorded by this table showed `changed_by = 0` — no accountability, for any project, at any time |
+| 2 | `ProjectStructureController`'s `move_workspace` action checked the caller's `project.structure.update` permission against the *source* project/workspace only (via the existing route middleware) — never against the *destination* workspace | A user with structure-update rights on their own project could move it into a workspace they have no membership or role in at all |
+
+**Fixes**: (1) both methods now use the real `$actorId` parameter passed in — verified directly
+against the DB after the fix: `changed_by` now correctly shows the real acting user's id (e.g. `2`
+or `297`), never `0`. (2) added an explicit `PermissionResolver::can($actorId, $newWorkspaceId, null,
+'project.create')` check against the destination workspace before allowing the move — same pattern
+used to close the equivalent gaps in `WorkspaceController::update()` (Round 3) and
+`ProjectController`'s project-move path (Round 4).
+
+### Frontend rewire
+
+`app.js`'s `moveProject()` now calls `PATCH /api/v1/projects/{id}/structure` with
+`{ action: 'move_workspace', new_workspace_id }` instead of the Round 4 ad-hoc `PUT /projects/{id}`
+call. `ProjectController::update()` no longer accepts or handles a `workspaceId` field at all — its
+scope is now exactly what its own docblock always said (progress/health only). The Edit Project
+modal's Workspace `<select>` is now `disabled` when editing, since workspace changes go exclusively
+through "ย้ายพื้นที่ทำงาน" now — having two UI paths to the same change was exactly the kind of split
+that caused this duplication in the first place.
+
+### Item explicitly reported to CTO, not decided by Dev
+
+Cross-workspace project **creation** (as distinct from *moving* an existing project, which is now
+fully implemented above) — allowing a user to create a brand-new project directly into a workspace
+tab other than their session's own — was investigated per the Completion Gate's requirement to
+resolve this via existing architecture wherever possible. `ProjectCreationPipeline::create()` calls
+`ProjectMemberRepository`, `MilestoneRepository`, `ProjectTechStackRepository`,
+`WorkspaceModuleSettingRepository`, `ApiTokenRepository`, governance auto-bind, and AI-assignment
+services — all separately bound to the session's fixed `current_workspace_id` via the DI container.
+Making this genuinely work means threading a workspace override through roughly 8 repositories, which
+is a real architecture change (not a stabilization fix) and risks the frozen Workspace Isolation
+guarantee. Per the Completion Gate's explicit instruction that Dev must not decide this unilaterally,
+this was reported to CTO with this evidence rather than implemented — see the structured CTO report
+for this round. The previously-considered workaround ("create into workspace A then auto-move to
+workspace B") was explicitly avoided since the Completion Gate directive forbids it.
+
+### Out-of-scope observation (not a defect — recorded, not fixed)
+
+An interactive test of the rewired Move Project flow initially showed a 403
+`Missing permission: project.structure.update` when moving a freshly-created test project. Root-cause
+investigation found this was **not a code defect**: the test's own seed data made the same user both
+the platform admin and the project's default `cto_user_id`/`dev_user_id`, which caused
+`ProjectCreationPipeline` to add that user to `project_members` with role `MEMBER` (lacking
+`project.structure.update`). Per the frozen `PermissionResolver` precedence algorithm (Phase 0 Spec
+§5.4 — project-level role overrides workspace-level role by design, not fixable within this
+Completion Gate's scope), that `MEMBER` row took precedence over the user's higher workspace-level
+role. Re-tested with realistic, distinct CTO/Dev test users — the move then succeeded cleanly with
+`changed_by` correctly recorded. Recorded here transparently since it surfaced during this round's
+testing, but it is a pre-existing interaction between two frozen, unrelated mechanisms
+(`PermissionResolver` precedence + `ProjectCreationPipeline`'s default role assignment), neither of
+which this session is permitted to change.
+
+### Consolidated deployment SQL
+
+`deploy/M3_ProjectManagement_CompletionGate_Deploy.sql` — one file, idempotent, rerunnable,
+supersedes the inline snippet in the Round 4 section above. Same backfill logic (grant each
+workspace's own creator `ADMIN` membership where missing), now with explicit BEFORE/AFTER
+verification `SELECT`s built into the file itself rather than left for the reader to construct.
+Verified in this session's own test environment: first run against seeded data matching the real
+scenario → BEFORE=4, AFTER=0; second run immediately after → BEFORE=0, AFTER=0 (idempotency
+confirmed — no duplicate rows via `GROUP BY workspace_id, user_id HAVING cnt > 1`, `workspaces`/
+`projects` row counts completely unchanged in both runs).
+
+### Regression
+
+Full PHPUnit suite re-run after every change this round: **200 tests / 523 assertions / 0 failures /
+0 errors / 0 skipped** — same stable baseline maintained since Round 2.
+
+### Files changed this round (in addition to the cumulative table above)
+
+| File | Change |
+|---|---|
+| `public/app/app.js` | `moveProject()` rewritten to call canonical `PATCH .../structure`; Edit Project modal disables the Workspace field. |
+| `src/Application/Http/Controllers/ProjectController.php` | Removed ad-hoc `workspaceId`/move handling from `update()`; scope now matches its own docblock exactly. |
+| `src/Application/Http/Controllers/ProjectStructureController.php` | Added destination-workspace permission check for `move_workspace`. |
+| `src/Domain/Project/ProjectStructureService.php` | Fixed `changedBy: 0` bug in all three structure-change methods. |
+| `src/Config/dependencies.php` | Injected `PermissionResolver` into `ProjectStructureController`'s factory. |
+| `deploy/M3_ProjectManagement_CompletionGate_Deploy.sql` | New — one consolidated, idempotent, rerunnable deployment SQL with built-in before/after verification. |
+
 ## Scope discipline (unchanged from Round 1)
 
 No redesign, no new architecture, no unrelated module changes. `PermissionResolver` / Workspace
 Scope / Audit mechanism / Response Envelope / Project-Scoped Token Enforcement are all unchanged —
 verified this round via the `MEMBER`-role negative-permission test and the audit-trail query above,
-not just left alone in theory.
+not just left alone in theory. The one item requiring an actual architecture decision (cross-workspace
+project creation) was reported to CTO rather than decided by Dev, per the Completion Gate's explicit
+instruction.

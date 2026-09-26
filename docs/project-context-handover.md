@@ -9,12 +9,58 @@
 
 ---
 
-## ⚠️ SUPERSEDING UPDATE — 2026-09-26 (Round 4 — Projects Management UI Finalization) — PENDING CEO Production Verification
+## ⚠️ SUPERSEDING UPDATE — 2026-09-26 (Round 5 — M3 Project Management Completion Gate) — PENDING CEO FINAL M3 UAT
 
 Everything below this box was written 2026-06-25 (Phase 4 / API v1.0 freeze) and is historical —
 kept for reference. **This box is the current state. Canonical evidence lives in
 `docs/m9/HANDOFF-NOTE-ProjectsUI-RevisionX-DeploymentDiscrepancy.md` — this box is a pointer/summary,
 not a duplicate; read that file for exact repro commands, tables, and evidence.**
+
+**Naming note:** this "M3" label (CTO's Completion Gate for the Workspace/Project Tabs work below) is
+distinct from the repository's own pre-existing, already-completed milestone literally named M3
+(`README-M3-REVISION1.md`, `docs/m3/` — Milestone/Revision/CTO Review workflow, unrelated to
+Workspaces/Projects). This session's Workspace/Project Tabs work is filed under `docs/m9/`. Flagging
+this here so a future reader searching for "M3" doesn't conflate the two.
+
+- **Round 5 (`79faac9`) — M3 Project Management Completion Gate:**
+  - Built an evidence-based Feature Inventory from the repository's actual Source-of-Truth design
+    docs (not memory) as the Completion Gate directive required, rather than assuming Round 4's
+    ad-hoc "ย้ายพื้นที่ทำงาน" implementation was the final word.
+  - **Found it was a duplicate of a separate, pre-existing, already-approved mechanism**:
+    `PATCH /api/v1/projects/{id}/structure` → `ProjectStructureController` →
+    `ProjectStructureService`, with its own dedicated audit table (`project_structure_history`) and
+    business rules (circular-hierarchy / project-code-conflict checks), confirmed as the canonical
+    flow by `M0-Design/Revision6/R6-05-Project-Creation-Flow-Revision6.md`. Rewired the frontend to
+    use it and removed the duplicate ad-hoc handling from `ProjectController::update()`.
+  - **Found and fixed two real, pre-existing defects** in that canonical (but previously unused by
+    the UI) flow, neither introduced by this session: (1) `changedBy: 0` hardcoded in all three
+    `ProjectStructureService` methods — `project_structure_history` never recorded who made a
+    structural change, ever; fixed to use the real acting user id. (2) `ProjectStructureController`
+    never checked the caller's permission against the *destination* workspace when moving a project
+    — same class of gap fixed twice before in earlier rounds (`WorkspaceController`,
+    `ProjectController`), now closed here too.
+  - **Confirmed "Change Parent / Move Project" is approved M3 scope**, per R6-05's explicit line that
+    Move/Change Parent/Promote flows are unchanged from R5 §2–4 — not an invented feature, now fully
+    implemented end-to-end rather than left as the earlier ad-hoc/incomplete version.
+  - **One item explicitly reported to CTO, not decided by Dev**: cross-workspace project *creation*
+    (as opposed to *moving* an existing project) requires touching ~8 separately session-scoped
+    repositories inside `ProjectCreationPipeline` — judged a real architecture change, not a
+    stabilization fix, and a risk to the frozen Workspace Isolation guarantee. Per the Completion
+    Gate's explicit STOP-and-report instruction, this was reported with evidence and options rather
+    than decided unilaterally — see the structured CTO report for this round.
+  - Built **one consolidated, idempotent, rerunnable deployment SQL**
+    (`deploy/M3_ProjectManagement_CompletionGate_Deploy.sql`) superseding the inline snippet shown in
+    the v4 README — verified rerun-safe against seeded test data (BEFORE=4→AFTER=0 first run,
+    BEFORE=0→AFTER=0 second run, no duplicate rows, `workspaces`/`projects` row counts unchanged).
+  - Full regression re-verified after every change: **200 tests / 523 assertions / 0 failures / 0
+    errors / 0 skipped**. Interactive re-test of the Move Project flow end-to-end (including a
+    403 false alarm correctly root-caused as a pre-existing frozen-`PermissionResolver`-precedence
+    interaction with test seed data, not a code defect — recorded as an out-of-scope observation, not
+    "fixed").
+  - **Consolidated deployment package**: `PMOIS_v2_ProjectsUI_RevisionX_DeploymentPackage_v5.zip` —
+    supersedes v1–v4.
+  - **Status: PENDING CEO FINAL M3 UAT — do NOT mark this "Production PASS."** Only CEO's own
+    Production runtime confirmation can change this status.
 
 - **Branch:** `claude/loving-allen-dg3dcb` (repo on GitHub: `taohouy/pmois-app`)
 - **Round 1 (`bcbc3f3`):** Revision X never deployed + its own `app.js` separately broken. Fixed;
