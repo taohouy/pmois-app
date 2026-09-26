@@ -1,4 +1,35 @@
+# Environment / secrets — never commit
 .env
+.env.local
+.env.*.local
+*.env
+
+# PHP runtime / cache
 .phpunit.result.cache
+/vendor/
+composer.phar
+
+# Local MySQL data (integration test runtime)
 .tmp-mysql/
+
+# Deployment packages — not source
 PMOIS_v2_*.zip
+*.zip
+*.tar.gz
+
+# Temporary / debug / one-off scripts
+check_*.php
+verify_*.php
+final_verify.php
+remove_*.php
+debug_*.php
+
+# Logs
+*.log
+/storage/logs/
+
+# IDE / OS
+.idea/
+.vscode/
+*.DS_Store
+Thumbs.db
