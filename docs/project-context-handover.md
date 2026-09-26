@@ -9,6 +9,45 @@
 
 ---
 
+## ⚠️ SUPERSEDING UPDATE — 2026-09-26 — Projects UI Revision X: Production Runtime Discrepancy (OPEN, pending CEO verification)
+
+Everything below this box was written 2026-06-25 (Phase 4 / API v1.0 freeze) and is historical —
+kept for reference. **This box is the current state.**
+
+- **Branch:** `claude/loving-allen-dg3dcb` (repo now on GitHub: `taohouy/pmois-app`), commit `bcbc3f3`
+- **Finding:** CTO/CEO UAT reported Production `https://pmo.jaideedigital.com/app/projects.html`
+  still shows the old single-form "Create Project" page, not the approved
+  `PMOIS_v2_Projects_UI_Revision X` (Workspace List + Project List + Modals + SweetAlert2) baseline
+  from `CHANGELOG-Projects-RevisionX.md` / `REVIEW-NOTE-Projects-RevisionX.md`.
+- **Root cause (two problems, both confirmed):**
+  1. Revision X (commit `d896372`) was committed to the repo but **never deployed** to Production —
+     the server was still serving the pre-Revision-X build (`23256f3`).
+  2. Revision X itself was **not actually functional** even in the repo: a fatal JS `SyntaxError`
+     in `app.js` (broke `app.js` parsing on *every* page, not just Projects), `topbar()`/`logout()`
+     accidentally deleted, `showSwal()` called but never defined, a broken SweetAlert2 SRI hash,
+     malformed `onclick` HTML on Edit buttons, Edit actions that always created duplicates instead
+     of updating, and two backend endpoints (`PUT /workspaces/{id}`, `PUT /projects/{id}`) that
+     never existed even though their permission codes were already seeded. This means the "PASS"
+     recorded in `TEST-RESULTS-Projects-RevisionX.txt` could not reflect a real browser session
+     against that commit.
+  - Full details: `docs/m9/HANDOFF-NOTE-ProjectsUI-RevisionX-DeploymentDiscrepancy.md`
+- **Fix:** Applied on commit `bcbc3f3`, same branch. Reuses existing `PermissionResolver` /
+  Workspace Scope / Audit mechanism and existing repository methods — no redesign, no new
+  architecture, no DB migration.
+- **Deployment package prepared for CEO** (this session has no Production FTP/SSH access):
+  `PMOIS_v2_ProjectsUI_RevisionX_DeploymentPackage.zip` — 7 files, exact Production-relative paths,
+  deployer README included inside.
+- **Status: PENDING.** Package handed to CEO for upload. **Do not mark this revision PASS or
+  Completed** until CEO performs the runtime check on
+  `https://pmo.jaideedigital.com/app/projects.html` (after upload, with a hard refresh / private
+  window to rule out browser caching) and reports the result back.
+- **Next session should:** ask whether the package was uploaded and what the runtime check showed
+  before doing anything else on Projects UI. If CEO reports FAIL on a specific item, re-open
+  `docs/m9/HANDOFF-NOTE-ProjectsUI-RevisionX-DeploymentDiscrepancy.md` for the relevant defect
+  table rather than re-diagnosing from scratch.
+
+---
+
 ## 1. Current Project Status
 
 **🎉 PMOIS API v1.0 — FROZEN**
