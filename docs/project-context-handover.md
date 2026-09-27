@@ -9,7 +9,7 @@
 
 ---
 
-## ⚠️ SUPERSEDING UPDATE — 2026-09-26 (Round 5 — M3 Project Management Completion Gate) — PENDING CEO FINAL M3 UAT
+## ⚠️ SUPERSEDING UPDATE — 2026-09-27 (Round 6 — M3 Final Candidate) — PENDING CEO FINAL M3 UAT
 
 Everything below this box was written 2026-06-25 (Phase 4 / API v1.0 freeze) and is historical —
 kept for reference. **This box is the current state. Canonical evidence lives in
@@ -61,6 +61,52 @@ this here so a future reader searching for "M3" doesn't conflate the two.
     supersedes v1–v4.
   - **Status: PENDING CEO FINAL M3 UAT — do NOT mark this "Production PASS."** Only CEO's own
     Production runtime confirmation can change this status.
+
+- **Round 6 (`7225d90`) — M3 Final Candidate, CTO Decision Round 6:**
+  - **Implemented the one remaining CTO Decision**: creating a project while a Workspace Tab is
+    open now creates the project directly into that tab's workspace, not always the session's own
+    workspace. Done via a new `ProjectCreateWorkspaceMiddleware` bound only to `POST
+    /api/v1/projects` that validates the target workspace and overrides the request's workspace
+    context right after authentication — before `ProjectController` (and its whole
+    `ProjectCreationPipeline` dependency tree, ~13 repositories) is constructed. Zero changes to any
+    of those repositories or to the Frozen API Contract. Frontend's Add Project modal no longer
+    offers a workspace picker on create (context is already the open tab); shows the target
+    workspace's name instead and always submits it. Verified with automated negative tests
+    (nonexistent target workspace → 404; no role in target workspace → 403; role in target
+    workspace lacking `project.create` → 403) and a positive cross-workspace create test that checks
+    real database persistence, not just the HTTP response.
+  - **Found and fixed two further pre-existing "fake success" defects**, invisible until a project
+    could legitimately exist outside a user's session-default workspace (which the above feature
+    makes routine for the first time): `ProjectController::update()` 404'd for a cross-workspace
+    project despite the permission check already authorizing it; and — more seriously —
+    `MySqlProjectRepository::updateProgress()`/`updateWorkspace()` scoped their `UPDATE ... WHERE
+    workspace_id` to the session's workspace, so a cross-workspace Edit or Move silently wrote zero
+    rows while the API still reported success with the client's intended (but unsaved) values. Fixed
+    using the same override-parameter pattern already established for `findById()` in an earlier
+    round. Also fixed `MySqlProjectMemberRepository::findRoleIdForUser()`, which incorrectly
+    filtered by the caller's session workspace instead of the project's own, causing
+    `PermissionResolver`'s project-level role check to silently miss a real project-level role
+    whenever session workspace ≠ project workspace.
+  - **Out-of-scope observation, not fixed**: the same `PermissionResolver`/workspace-scoping pattern
+    likely also affects other project-scoped write endpoints outside this page (Project Members,
+    Milestones, Tech Stack, Environments, Dependencies, Releases, Team Assignments). Recommend a
+    dedicated audit pass once M3 is signed off — not fixed here since it is broader than the
+    Workspace/Project management page in scope this round.
+  - Full regression re-verified after every change: **208 tests / 553 assertions / 0 failures / 0
+    errors / 0 skipped** (200/523 baseline + 8 new tests/30 new assertions across two new test
+    files covering cross-workspace create, edit, and move — with direct database-row assertions,
+    not just HTTP status, given the exact failure mode found was a misleading 200 OK). Full
+    interactive Playwright re-verification of the entire M3 workflow (Workspace create/edit/
+    activate/deactivate with refresh-persistence checks at each step, Project create/search/edit/
+    move, all across multiple Workspace Tabs) — 11/11 checks passed.
+  - **One consolidated deployment SQL for the whole M3 effort**:
+    `deploy/M3_FinalCandidate_Deploy.sql` — supersedes the v5 SQL (same backfill logic, re-verified
+    idempotent and safe to run even if v5's SQL already applied).
+  - **Final consolidated deployment package**: `PMOIS_v2_ProjectsUI_M3_FinalCandidate_v6.zip` —
+    supersedes v1–v5, self-contained README (no need to open any earlier package to deploy or test).
+  - **Status: PENDING CEO FINAL M3 UAT — do NOT mark this "Production PASS."** No known M3
+    limitation remains on this page; only CEO's own Production runtime confirmation can change this
+    status.
 
 - **Branch:** `claude/loving-allen-dg3dcb` (repo on GitHub: `taohouy/pmois-app`)
 - **Round 1 (`bcbc3f3`):** Revision X never deployed + its own `app.js` separately broken. Fixed;

@@ -749,11 +749,139 @@ Full PHPUnit suite re-run after every change this round: **200 tests / 523 asser
 | `src/Config/dependencies.php` | Injected `PermissionResolver` into `ProjectStructureController`'s factory. |
 | `deploy/M3_ProjectManagement_CompletionGate_Deploy.sql` | New — one consolidated, idempotent, rerunnable deployment SQL with built-in before/after verification. |
 
+## Round 6 — M3 Final Candidate, CTO Decision Round 6 (`7225d90`)
+
+CTO reviewed Round 5 and held deployment, ruling: "Dev ตัดสินใจถูก แต่ Dev ไม่ตัดสินใจเอง" is not
+an option here — CTO decided the outstanding item from Round 5 directly: create-project-into-target-
+workspace is approved, using the approach where the client names the target workspace and the server
+validates+authorizes it (not the "create then auto-move" workaround, which was explicitly forbidden).
+
+### Implementation: cross-workspace project creation
+
+New `src/Application/Middleware/ProjectCreateWorkspaceMiddleware.php`, bound only to
+`POST /api/v1/projects` (a path+method check makes it a no-op for every other route). When the
+request body names a `workspace_id` different from the session's own:
+1. Validates the target workspace exists (404 if not).
+2. Overrides the DI container's `current_workspace_id` entry *and* the request's `workspace_id`
+   attribute.
+3. Lets the existing `RequiresPermissionMiddleware('project.create')` (unchanged) run afterward,
+   now checking permission against the corrected (target) workspace rather than the session's own.
+
+This works without touching `ProjectCreationPipeline` or any of its ~13 dependent repositories
+because of a documented, pre-existing Slim behavior this codebase already relies on elsewhere (see
+`WorkspaceContextMiddleware`'s own comment): the route callable (`ProjectController`, and therefore
+its entire constructor-injected dependency graph) is only resolved once every middleware in the
+chain has run. Overriding the container value early enough means every repository in that graph
+gets built against the *target* workspace, automatically.
+
+**Positioning inside the middleware chain was proven to matter empirically, not just in theory.**
+The first attempt placed the override right before `AuditLoggingMiddleware` (the one consumer that
+obviously needed the corrected value) — this looked sufficient by inspection but failed a live test:
+`audit_trails.workspace_id` for `project_created` still showed the session's workspace, not the
+target. Root cause, found by instrumenting the actual PHP-DI resolution order with `error_log()`
+and a stack trace inside the container's `AuditTrailRepositoryInterface` factory: `AiAccessControlMiddleware`
+(which runs *before* `WorkspaceContextMiddleware` in the existing chain) also depends on
+`AuditTrailRepositoryInterface` in its own constructor (used for its own `ai_access_denied` audit
+logging) — and PHP-DI caches that resolved instance for the rest of the request the moment anything
+first asks for it. The fix was to move the override to run immediately after `AuthTokenMiddleware`
+— the earliest point at which the session's real workspace is known — before *anything* in the
+pipeline can accidentally resolve and cache a workspace-scoped repository first. Re-verified after
+the fix: `audit_trails.workspace_id` correctly shows the target workspace.
+
+Frontend (`app.js`): the Add Project modal no longer shows a workspace `<select>` when creating —
+context is already the open Workspace Tab — and instead shows a read-only line naming the target
+workspace, then always submits `workspace_id` for that tab. The v5 "created into your main workspace
+instead" workaround message is gone entirely, since it's no longer true.
+
+### Two further "fake success" defects found via full end-to-end workflow testing
+
+Testing the above feature end-to-end (per the Completion Gate's required workflow test: create in
+tab A, move to tab B, edit in tab B, etc.) surfaced two further defects — both pre-existing, both
+invisible until a project could legitimately live outside a user's own default workspace, which
+never happened before this round:
+
+1. **`ProjectController::update()` (the "แก้ไข" button's progress/health save) 404'd for any
+   project outside the session's own workspace**, even though `RequiresPermissionMiddleware` had
+   already authorized the request via the project's own project-level role. Root cause: its
+   `findById($projectId)` call had no override, so it was scoped to the session's workspace only.
+2. **The actual database write silently no-opped while reporting success.**
+   `MySqlProjectRepository::updateProgress()` and `updateWorkspace()` both built their `UPDATE ...`
+   query with `WHERE ... AND workspace_id = :session_workspace` — for a cross-workspace project this
+   matched zero rows, but PDO's `execute()` still returns `true` (the query ran without SQL error,
+   it just changed nothing), and the controller never checked the affected-row outcome. The API
+   therefore returned `200 OK` with the exact values the client asked to save, while nothing was
+   ever written to the database — confirmed by comparing the API response against a direct
+   `SELECT` on the row immediately after. This is precisely the "fake success" failure mode the
+   Completion Gate explicitly named as forbidden.
+
+**Fix**: added `ProjectRepositoryInterface::findWorkspaceIdForProject(int $id): ?int` (a lightweight,
+unscoped lookup — safe because every caller has already been through a project-level permission
+check by the time it's used) so a controller/service holding only a project id can resolve the
+project's *real* workspace, then pass it as the existing `$workspaceIdOverride` parameter already
+established for `findById()` in an earlier round — extended now to `updateProgress()` and
+`updateWorkspace()` too. `ProjectController::update()` now also checks `updateProgress()`'s boolean
+return value and returns a real `500 UPDATE_FAILED` error instead of assuming success.
+`ProjectStructureService::moveWorkspace()` (Move Project) had the identical defect and received the
+identical fix — a project outside the session's workspace could not be moved at all before this fix
+(`"Project not found"`), and would have had the exact same silent-write risk had it superficially
+appeared to work.
+
+**Root permission bug, also fixed**: `MySqlProjectMemberRepository::findRoleIdForUser()` filtered
+`project_members` by the *caller's session workspace* in addition to `project_id`/`user_id` — since
+a `project_id` already belongs to exactly one workspace, this extra filter was always redundant when
+correct and actively wrong whenever session workspace ≠ project's real workspace, causing
+`PermissionResolver`'s project-level check to silently miss a real project-level role and fall back
+to an unrelated workspace-level role instead (which could produce either a false ALLOW or a false
+DENY depending on what role the caller happens to hold in their own session workspace). Removed the
+incorrect filter; `project_id` + `user_id` alone is correct and sufficient.
+
+**Out-of-scope observation (not fixed):** `assertProjectBelongsToCurrentWorkspace()` in the same
+repository (used by `addMember()`/`removeMember()`/`listMembers()`, i.e. the Project Members feature)
+has the identical class of defect, as do `ProjectStructureService::changeParent()`/`promoteToRoot()`
+and `MySqlProjectRepository::updateParent()`/`updateStatus()`. None of these are reachable through
+any button currently exposed on the Projects management page (no Close/Change-Parent/Promote button
+exists in this UI, and Project Members has its own separate page), so they were left unchanged per
+the Completion Gate's explicit scope-control instruction — flagged here for a dedicated remediation
+pass CTO may choose to schedule separately.
+
+### Regression
+
+**208 tests / 553 assertions / 0 failures / 0 errors / 0 skipped** (200/523 baseline unchanged +
+8 new tests across two new files: `ProjectCrossWorkspaceCreationTest.php` — 6 tests covering the
+create-into-target-workspace feature, including all three negative-authorization cases and one
+positive case with direct DB/audit assertions — and `ProjectCrossWorkspaceEditMoveTest.php` — 2
+tests that specifically assert against the database row after Edit/Move, not just the HTTP
+response, since that's exactly where the fake-success bugs hid). Both new test files boot the real
+Slim `App` from the actual `dependencies.php` + `routes.php` (not a hand-built test app), since the
+defect this round was fundamentally about middleware ordering and DI resolution timing — a
+mocked/unit-level test could not have caught it.
+
+Full interactive Playwright re-verification of the entire M3 workflow end-to-end, including refresh-
+persistence checks at each step: Workspace create → tab-select → refresh → edit → refresh →
+deactivate → refresh → activate → refresh (8/8 checks passed), then Project create-into-that-tab →
+search → edit-and-refresh (3/3 checks passed) — 11/11 total.
+
+### Files changed this round
+
+| File | Change |
+|---|---|
+| `src/Application/Middleware/ProjectCreateWorkspaceMiddleware.php` | New — implements cross-workspace project creation per CTO Decision Round 6. |
+| `src/Config/routes.php` | Wires the new middleware into the group chain, positioned immediately after `AuthTokenMiddleware`. |
+| `src/Application/Http/Controllers/ProjectController.php` | `update()`/`close()` resolve the project's real workspace before fetching it; `update()` checks `updateProgress()`'s return value instead of assuming success. |
+| `src/Domain/Project/ProjectRepositoryInterface.php` | New `findWorkspaceIdForProject()`; `updateProgress()`/`updateWorkspace()` gain an optional `$workspaceIdOverride` parameter (default preserves exact old behavior). |
+| `src/Infrastructure/Persistence/MySQL/MySqlProjectRepository.php` | Implements the above; both write methods now check the *real* workspace instead of the session's. |
+| `src/Infrastructure/Persistence/MySQL/MySqlProjectMemberRepository.php` | `findRoleIdForUser()` no longer incorrectly filters by session workspace. |
+| `src/Domain/Project/ProjectStructureService.php` | `moveWorkspace()` resolves the project's real workspace before reading/writing it. |
+| `public/app/app.js` | Add Project modal targets the active tab directly, no workspace picker on create. |
+| `deploy/M3_FinalCandidate_Deploy.sql` | New — the one SQL file for the whole M3 effort, superseding the v5 SQL. |
+| `tests/Integration/ProjectCrossWorkspaceCreationTest.php`, `tests/Integration/ProjectCrossWorkspaceEditMoveTest.php` | New — regression coverage for this round's feature and fixes. |
+
 ## Scope discipline (unchanged from Round 1)
 
 No redesign, no new architecture, no unrelated module changes. `PermissionResolver` / Workspace
 Scope / Audit mechanism / Response Envelope / Project-Scoped Token Enforcement are all unchanged —
 verified this round via the `MEMBER`-role negative-permission test and the audit-trail query above,
-not just left alone in theory. The one item requiring an actual architecture decision (cross-workspace
-project creation) was reported to CTO rather than decided by Dev, per the Completion Gate's explicit
-instruction.
+not just left alone in theory. Round 6 implemented exactly the one CTO Decision handed down (create
+into target workspace) using minimal, existing-pattern-consistent changes, and reported (rather than
+silently fixed) the wider class of latent workspace-scoping defects it surfaced outside this page's
+own scope.
