@@ -15,34 +15,28 @@ use App\Domain\Project\ProjectMemberRepositoryInterface;
  */
 final class MySqlProjectMemberRepository extends BaseRepository implements ProjectMemberRepositoryInterface
 {
+    /**
+     * แก้ไข (M3 Completion Gate — Round 6 full workflow re-verification): เดิม query นี้ filter
+     * ซ้ำด้วย p.workspace_id = current_workspace_id ของ session ด้วย — ผิด เพราะ project_id
+     * ที่รับมาก็ผูกกับ "workspace เดียว" อยู่แล้วในตัวมันเอง (ไม่มีทางมี project_members ของ
+     * project นี้ที่ workspace อื่น) การกรองซ้ำด้วย workspace ของ "session" (ไม่ใช่ของ project)
+     * ทำให้ PermissionResolver::can() เช็ค role ระดับ project ไม่เจอทุกครั้งที่ผู้ใช้กำลังทำงาน
+     * กับ project ที่ไม่ได้อยู่ workspace เดียวกับ session (เช่นผ่าน Workspace Tabs) แล้ว fallback
+     * ไป workspace role ของ workspace ที่ไม่เกี่ยวข้องแทน (ผิดทั้งกรณี "ควรอนุญาต" และ "ควรปฏิเสธ")
+     * เอา workspace filter ที่ผิดออก เหลือแค่ project_id + user_id ซึ่งถูกต้องและเพียงพอ
+     */
     public function findRoleIdForUser(int $projectId, int $userId): ?int
     {
         $stmt = $this->db->prepare(
-            'SELECT pm.role_id, p.workspace_id
-             FROM project_members pm
-             INNER JOIN projects p ON p.id = pm.project_id
-             WHERE pm.project_id = :project_id
-               AND pm.user_id = :user_id
-               AND p.workspace_id = :workspace_id
-             LIMIT 1'
+            'SELECT role_id FROM project_members WHERE project_id = :project_id AND user_id = :user_id LIMIT 1'
         );
         $stmt->execute([
             'project_id' => $projectId,
             'user_id' => $userId,
-            'workspace_id' => $this->workspaceId,
         ]);
         $row = $stmt->fetch();
 
-        if ($row === false) {
-            return null;
-        }
-
-        // defense in depth เหมือน assertWorkspaceMatch แต่เขียนตรงเพราะ query นี้คืนค่าเดียว ไม่ใช่ entity เต็ม
-        if ((int) $row['workspace_id'] !== $this->workspaceId) {
-            throw new \RuntimeException('Workspace scope mismatch ใน ProjectMemberRepository');
-        }
-
-        return (int) $row['role_id'];
+        return $row !== false ? (int) $row['role_id'] : null;
     }
 
     public function addMember(int $projectId, int $userId, int $roleId): void

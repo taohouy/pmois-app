@@ -81,17 +81,15 @@ final class ProjectController
      * R6: creation ผ่าน ProjectCreationPipeline — template + workspace defaults
      * (CEO กรอกข้อมูลให้น้อยที่สุด: name, code + cto/dev/mode ที่ pre-fill จาก defaults)
      *
-     * หมายเหตุ (Consolidated Stabilization — ตัดสินใจไม่ทำ ไม่ใช่ทำไม่สำเร็จ): เคยลองให้
-     * สร้างเข้า workspace อื่นที่ไม่ใช่ workspace ของ session ได้ (ตาม body.workspaceId) เพื่อ
-     * รองรับ Workspace Tabs แต่พบว่า ProjectCreationPipeline เรียก repository อื่นอีกหลายตัว
-     * ต่อ (ProjectMemberRepository, MilestoneRepository, ProjectTechStackRepository,
-     * WorkspaceModuleSettingRepository, ApiTokenRepository, Governance auto-bind, AI
-     * assignment ฯลฯ) ซึ่งทุกตัวถูก inject 'current_workspace_id' ของ session ตายตัวผ่าน DI
-     * container เหมือนกันหมด — การให้สร้างข้าม workspace ได้จริงต้องแก้ scoping ของทุก
-     * repository เหล่านี้ ซึ่งเป็นการเปลี่ยน architecture ใหญ่เกินขอบเขตของ stabilization
-     * revision นี้ (และเสี่ยงต่อ Workspace Isolation ที่ frozen ไว้) จึงคงพฤติกรรมเดิม: สร้าง
-     * เข้า workspace ของ session เท่านั้นเสมอ ไม่ว่า body จะส่ง workspaceId อะไรมาก็ตาม —
-     * รายงานเป็น known limitation แทนการฝืนทำ (ดู Handoff Note)
+     * หมายเหตุ (M3 Completion Gate — CTO Decision Round 6): body.workspace_id (ถ้าระบุ
+     * และต่างจาก workspace ของ session) ตอนนี้สร้างเข้า workspace เป้าหมายนั้นได้จริงแล้ว —
+     * ไม่ใช่แค่เก็บไว้แสดงผลอย่างที่เคยเป็น การตรวจสอบสิทธิ์และการ override workspace
+     * context ทั้งหมดทำที่ระดับ middleware (ดู ProjectCreateWorkspaceMiddleware +
+     * RequiresPermissionMiddleware ใน routes.php) ก่อนที่ Controller นี้ (และทั้ง
+     * dependency tree ของ ProjectCreationPipeline) จะถูก resolve จึงไม่ต้องแก้โค้ดตรงนี้
+     * หรือ repository ใดๆ เลย — $request->getAttribute('workspace_id') ด้านล่างจะเป็นค่าที่
+     * ผ่านการ validate+authorize แล้วเสมอ ไม่ว่าจะเป็น workspace ของ session หรือ workspace
+     * เป้าหมายที่ระบุมาก็ตาม
      */
     public function create(Request $request, Response $response): Response
     {
@@ -148,7 +146,7 @@ final class ProjectController
     public function close(Request $request, Response $response, array $args): Response
     {
         $projectId = (int) $args['id'];
-        $project = $this->projectRepo->findById($projectId);
+        $project = $this->findProjectAnyWorkspace($projectId);
 
         if ($project === null) {
             return ApiResponse::error($response, 'NOT_FOUND', 'ไม่พบ project', [], 404);
@@ -187,11 +185,19 @@ final class ProjectController
      * โดยเฉพาะ) — การมี 2 endpoint ทำหน้าที่เดียวกันจะทำให้ audit trail กระจัดกระจาย
      * และเสี่ยง permission check ไม่ตรงกัน จึงให้ Edit endpoint นี้ทำหน้าที่แก้ progress/
      * health เท่านั้น ตรงตาม doc-comment เดิม
+     *
+     * หมายเหตุ (M3 Completion Gate — Round 6 full workflow re-verification): เดิม findById()
+     * ตรงนี้ scope กับ workspace ของ session เท่านั้น — พบระหว่างทดสอบ workflow เต็มรูปแบบว่า
+     * แก้ไข project ที่อยู่ Workspace Tab อื่น (ไม่ใช่ workspace หลักของ session) จะได้ 404
+     * เสมอ แม้ RequiresPermissionMiddleware จะอนุญาตแล้วก็ตาม (permission เช็คถูก project_id
+     * แต่ data fetch ยัง scope ผิด workspace) แก้โดยหา workspace จริงของ project ก่อนผ่าน
+     * findWorkspaceIdForProject() แล้วค่อยใช้ override ที่มีอยู่แล้วของ findById() —ไม่ใช่
+     * ช่องโหว่ใหม่ เพราะ permission ระดับ project ถูกเช็คมาก่อนหน้าเข้าถึง method นี้เสมอ
      */
     public function update(Request $request, Response $response, array $args): Response
     {
         $projectId = (int) $args['id'];
-        $project = $this->projectRepo->findById($projectId);
+        $project = $this->findProjectAnyWorkspace($projectId);
 
         if ($project === null) {
             return ApiResponse::error($response, 'NOT_FOUND', 'ไม่พบ project', [], 404);
@@ -219,7 +225,13 @@ final class ProjectController
                 return ApiResponse::error($response, 'VALIDATION_ERROR', 'health ไม่ถูกต้อง', [], 422);
             }
 
-            $this->projectRepo->updateProgress($projectId, $newProgress, $newHealth);
+            // ส่ง workspace จริงของ project (จาก findProjectAnyWorkspace ด้านบน) เสมอ — ไม่งั้น
+            // จะซ้ำปัญหาเดียวกับตอน findById() คือ project ข้าม workspace จะ UPDATE ไม่โดน
+            // แถวไหนเลยแบบเงียบๆ (ดู doc-comment บน updateProgress() ใน MySqlProjectRepository)
+            $saved = $this->projectRepo->updateProgress($projectId, $newProgress, $newHealth, $project->workspaceId);
+            if (!$saved) {
+                return ApiResponse::error($response, 'UPDATE_FAILED', 'บันทึกโครงการไม่สำเร็จ กรุณาลองใหม่', [], 500);
+            }
         }
 
         $auditContext = $request->getAttribute('audit_context');
@@ -244,5 +256,17 @@ final class ProjectController
             'health' => $newHealth,
             'current_milestone' => $project->currentMilestoneId,
         ]);
+    }
+
+    /**
+     * หา project ด้วย id เดียว โดยไม่ยึดติดกับ workspace ของ session — ใช้เฉพาะใน endpoint
+     * ที่ RequiresPermissionMiddleware เช็คสิทธิ์ระดับ project_id มาก่อนแล้วเสมอ (update/close)
+     * ดู doc-comment ของ findWorkspaceIdForProject() ใน ProjectRepositoryInterface
+     */
+    private function findProjectAnyWorkspace(int $projectId): ?\App\Domain\Project\Project
+    {
+        $workspaceId = $this->projectRepo->findWorkspaceIdForProject($projectId);
+
+        return $workspaceId !== null ? $this->projectRepo->findById($projectId, $workspaceId) : null;
     }
 }

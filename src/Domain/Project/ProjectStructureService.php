@@ -17,7 +17,19 @@ final class ProjectStructureService
      */
     public function moveWorkspace(int $projectId, int $newWorkspaceId, int $actorId, ?string $reason): void
     {
-        $project = $this->projectRepository->findById($projectId);
+        // แก้ไข (M3 Completion Gate — Round 6): findById()/updateWorkspace() แบบไม่ระบุ
+        // override จะ scope กับ workspace ของ session เท่านั้น — ถ้า project ที่จะย้ายอยู่
+        // Workspace Tab อื่น (ไม่ใช่ workspace หลักของ session) จะเจอ "Project not found"
+        // ทั้งที่ project มีอยู่จริงและผู้ใช้มีสิทธิ์ (RequiresPermissionMiddleware เช็ค
+        // project.structure.update ผ่าน project_id ให้แล้วก่อนถึงชั้นนี้เสมอ) ต้องหา
+        // workspace จริงของ project ก่อนผ่าน findWorkspaceIdForProject() แล้วส่งเป็น
+        // override ให้ findById()/updateWorkspace() ทั้งคู่
+        $realWorkspaceId = $this->projectRepository->findWorkspaceIdForProject($projectId);
+        if ($realWorkspaceId === null) {
+            throw new \InvalidArgumentException("Project not found");
+        }
+
+        $project = $this->projectRepository->findById($projectId, $realWorkspaceId);
         if ($project === null) {
             throw new \InvalidArgumentException("Project not found");
         }
@@ -29,7 +41,9 @@ final class ProjectStructureService
         $oldWorkspaceId = $project->workspaceId;
 
         // Update project workspace
-        $this->projectRepository->updateWorkspace($projectId, $newWorkspaceId);
+        if (!$this->projectRepository->updateWorkspace($projectId, $newWorkspaceId, $realWorkspaceId)) {
+            throw new \RuntimeException("ย้าย workspace ไม่สำเร็จ — กรุณาลองใหม่");
+        }
 
         // Record structure history
         $this->structureHistoryRepository->create(new \App\Domain\Project\ProjectStructureHistory(

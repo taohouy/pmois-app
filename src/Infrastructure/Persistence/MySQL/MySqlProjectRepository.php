@@ -14,6 +14,15 @@ use RuntimeException;
  */
 final class MySqlProjectRepository extends BaseRepository implements ProjectRepositoryInterface
 {
+    public function findWorkspaceIdForProject(int $id): ?int
+    {
+        $stmt = $this->db->prepare('SELECT workspace_id FROM projects WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $id]);
+        $row = $stmt->fetch();
+
+        return $row !== false ? (int) $row['workspace_id'] : null;
+    }
+
     public function findById(int $id, ?int $workspaceIdOverride = null): ?Project
     {
         if ($workspaceIdOverride === null) {
@@ -132,21 +141,26 @@ final class MySqlProjectRepository extends BaseRepository implements ProjectRepo
         return $project;
     }
 
-    public function updateWorkspace(int $id, int $newWorkspaceId): bool
+    public function updateWorkspace(int $id, int $newWorkspaceId, ?int $workspaceIdOverride = null): bool
     {
-        if ($this->findById($id) === null) {
+        // แก้ไข (M3 Completion Gate — Round 6): เหตุผลเดียวกับ updateProgress() — เดิม scope
+        // กับ workspace ของ session เท่านั้น ทำให้ ProjectStructureService::moveWorkspace()
+        // ย้าย project ที่อยู่ Workspace Tab อื่น (ไม่ใช่ workspace หลักของ session) ไม่ได้เลย
+        // (findById() คืน null ทั้งที่ project มีอยู่จริงและผู้ใช้มีสิทธิ์)
+        $workspaceId = $workspaceIdOverride ?? $this->workspaceId;
+
+        if ($this->findById($id, $workspaceIdOverride) === null) {
             return false;
         }
 
-        $sql = $this->applyWorkspaceScope(
-            'UPDATE projects SET workspace_id = :new_workspace_id WHERE id = :id AND {{WORKSPACE_FILTER}}'
+        $stmt = $this->db->prepare(
+            'UPDATE projects SET workspace_id = :new_workspace_id WHERE id = :id AND workspace_id = :workspace_id'
         );
-        $stmt = $this->db->prepare($sql);
 
         return $stmt->execute([
             'new_workspace_id' => $newWorkspaceId,
             'id' => $id,
-            'workspace_id' => $this->workspaceId,
+            'workspace_id' => $workspaceId,
         ]);
     }
 
@@ -181,22 +195,29 @@ final class MySqlProjectRepository extends BaseRepository implements ProjectRepo
         ]);
     }
 
-    public function updateProgress(int $id, int $progressPercent, string $health): bool
+    public function updateProgress(int $id, int $progressPercent, string $health, ?int $workspaceIdOverride = null): bool
     {
-        if ($this->findById($id) === null) {
+        // แก้ไข (M3 Completion Gate — Round 6): เดิม method นี้ scope กับ workspace ของ
+        // session เท่านั้น ทำให้แก้ progress/health ของ project ที่อยู่ Workspace Tab อื่น
+        // (ไม่ใช่ workspace หลักของ session) UPDATE ไม่โดนแถวไหนเลย (WHERE ไม่ match) แต่
+        // execute() คืน true อยู่ดี (query รันสำเร็จ แค่ 0 rows affected) — Controller จึง
+        // คิดว่าบันทึกสำเร็จทั้งที่ข้อมูลไม่ถูกบันทึกจริงเลย (fake success) เพิ่ม
+        // $workspaceIdOverride ตาม pattern เดียวกับ findById() แก้ปัญหานี้
+        $workspaceId = $workspaceIdOverride ?? $this->workspaceId;
+
+        if ($this->findById($id, $workspaceIdOverride) === null) {
             return false;
         }
 
-        $sql = $this->applyWorkspaceScope(
-            'UPDATE projects SET progress_percent = :progress_percent, health = :health WHERE id = :id AND {{WORKSPACE_FILTER}}'
+        $stmt = $this->db->prepare(
+            'UPDATE projects SET progress_percent = :progress_percent, health = :health WHERE id = :id AND workspace_id = :workspace_id'
         );
-        $stmt = $this->db->prepare($sql);
 
         return $stmt->execute([
             'progress_percent' => $progressPercent,
             'health' => $health,
             'id' => $id,
-            'workspace_id' => $this->workspaceId,
+            'workspace_id' => $workspaceId,
         ]);
     }
 

@@ -185,18 +185,18 @@ function openAddWorkspaceModal(workspace = null) {
 /* ===== Add/Edit Project Modal ===== */
 let _projectModalRequestSeq = 0;
 async function openAddProjectModal(project = null, defaultWorkspaceId = null) {
-  // เปิดสองครั้งติดกัน (เช่น ดับเบิลคลิก Edit คนละแถว) แล้ว fetch workspaces เสร็จไม่ตามลำดับ —
-  // ต้องเช็คว่ายังเป็น request ล่าสุดก่อน render ทับ modal ที่เปิดใหม่กว่าไปแล้ว
+  // เปิดสองครั้งติดกัน (เช่น ดับเบิลคลิก Edit คนละแถว) — กัน race ของการ render
   const requestSeq = ++_projectModalRequestSeq;
-  let workspacesHTML = '<option value="">— เลือกพื้นที่ทำงาน —</option>';
-  try {
-    const workspaces = await api('/api/v1/workspaces');
-    workspacesHTML += workspaces.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('');
-  } catch (e) {
-    workspacesHTML = '<option value="">ไม่สามารถโหลดพื้นที่ทำงานได้</option>';
-  }
 
-  if (requestSeq !== _projectModalRequestSeq) return; // ถูกแทนที่ด้วยการเปิด modal ครั้งใหม่กว่าแล้ว
+  // M3 Completion Gate (CTO Decision Round 6): ตอนสร้างโครงการใหม่ ผู้ใช้อยู่ Workspace
+  // Tab ไหน ต้องสร้างเข้า Workspace นั้นจริง — context ชัดเจนอยู่แล้วจาก Tab ที่เปิดอยู่
+  // จึงไม่ให้เลือกซ้ำในฟอร์ม (ตัดปุ่มเลือก Workspace ออก) แต่โชว์ชื่อ Workspace เป้าหมาย
+  // ให้ผู้ใช้เห็นตรงๆ ว่าจะสร้างที่ไหน แล้วส่ง workspace_id นี้ไปกับ request เสมอ — backend
+  // validate+authorize เองอีกชั้นก่อนสร้างจริง (ดู ProjectCreateWorkspaceMiddleware)
+  const targetWorkspace = _workspaces.find(w => w.id === defaultWorkspaceId);
+  const targetWorkspaceName = targetWorkspace ? targetWorkspace.name : '-';
+
+  if (requestSeq !== _projectModalRequestSeq) return;
 
   const overlay = openModal(`
     <div style="border-bottom:1px solid #e0e0e0;padding-bottom:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
@@ -204,12 +204,13 @@ async function openAddProjectModal(project = null, defaultWorkspaceId = null) {
       <button type="button" class="btn tiny" id="projectModalClose">&times;</button>
     </div>
     <form id="projectForm">
+      ${project ? '' : `<div style="background:#f5f7fa;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:14px">
+        จะสร้างในพื้นที่ทำงาน: <strong>${esc(targetWorkspaceName)}</strong>
+      </div>`}
       <label>ชื่อโครงการ *</label>
       <input type="text" name="name" required placeholder="ชื่อโครงการ" ${project ? 'disabled' : ''}>
       <label>รหัส *</label>
       <input type="text" name="code" required placeholder="PRJ-00100" ${project ? 'disabled' : ''}>
-      <label>พื้นที่ทำงาน</label>
-      <select name="workspaceId" ${project ? 'disabled' : ''}>${workspacesHTML}</select>
       <label>รูปแบบการพัฒนา</label>
       <select name="development_mode" ${project ? 'disabled' : ''}>
         <option value="">ค่าเริ่มต้น</option>
@@ -236,13 +237,9 @@ async function openAddProjectModal(project = null, defaultWorkspaceId = null) {
   if (project) {
     form.name.value = project.name || '';
     form.code.value = project.code || '';
-    if (project.workspaceId) form.workspaceId.value = project.workspaceId;
     form.development_mode.value = project.development_mode || '';
     form.progress.value = project.progress ?? '';
     form.health.value = project.health || 'green';
-  } else if (defaultWorkspaceId) {
-    // เพิ่มโครงการใหม่ — เลือก Workspace ปัจจุบันให้อัตโนมัติ ไม่บังคับผู้ใช้เลือกซ้ำ
-    form.workspaceId.value = defaultWorkspaceId;
   }
 
   overlay.querySelector('#projectModalClose').addEventListener('click', closeModal);
@@ -263,17 +260,10 @@ async function openAddProjectModal(project = null, defaultWorkspaceId = null) {
         closeModal();
         await showSwal('สำเร็จ', 'บันทึกโครงการสำเร็จ', 'success');
       } else {
-        const result = await api('/api/v1/projects', { method: 'POST', body: JSON.stringify(body) });
+        // ส่ง workspace_id ของ Tab ปัจจุบันเสมอ — ตรง context ที่ผู้ใช้เห็นในฟอร์มด้านบน
+        body.workspace_id = defaultWorkspaceId;
+        await api('/api/v1/projects', { method: 'POST', body: JSON.stringify(body) });
         closeModal();
-        // ข้อจำกัดสถาปัตยกรรมปัจจุบัน: โครงการใหม่ถูกสร้างเข้า workspace หลักของบัญชีผู้ใช้เสมอ
-        // (ไม่ใช่ workspace ที่ระบุใน body) — ถ้าไม่ตรงกับ Tab ที่กำลังเปิดอยู่ ต้องแจ้งให้ทราบ
-        // ตรงๆ แทนที่จะแสดง "สำเร็จ" เฉยๆ แล้วผู้ใช้งงว่าทำไมโครงการไม่ขึ้นใน Tab ปัจจุบัน
-        if (result.workspaceId && result.workspaceId !== _activeWorkspaceId) {
-          await showSwal('สร้างสำเร็จ', 'ระบบสร้างโครงการเข้าพื้นที่ทำงานหลักของบัญชีคุณแทน (ข้อจำกัดปัจจุบัน ไม่สามารถสร้างข้ามพื้นที่ทำงานได้)', 'info');
-          await loadAll();
-          selectWorkspace(result.workspaceId);
-          return;
-        }
         await showSwal('สำเร็จ', 'สร้างโครงการสำเร็จ', 'success');
       }
       await loadAll();

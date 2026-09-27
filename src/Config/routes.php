@@ -50,6 +50,7 @@ use App\Application\Middleware\AiAccessControlMiddleware;
 use App\Application\Middleware\ApiScopeMiddleware;
 use App\Application\Middleware\AuditLoggingMiddleware;
 use App\Application\Middleware\AuthTokenMiddleware;
+use App\Application\Middleware\ProjectCreateWorkspaceMiddleware;
 use App\Application\Middleware\ProjectScopeMiddleware;
 use App\Application\Middleware\RateLimitMiddleware;
 use App\Application\Middleware\RequiresPermissionMiddleware;
@@ -485,6 +486,20 @@ return function (App $app, ContainerInterface $container): void {
         ->add(AiAccessControlMiddleware::class)
         // Phase 4: enforce project isolation for project-scoped tokens (runs 2nd, after AuthToken)
         ->add(ProjectScopeMiddleware::class)
+        // M3 Completion Gate (CTO Decision Round 6): override workspace context เฉพาะ
+        // POST /projects เมื่อ body ระบุ workspace_id เป้าหมายต่างจาก session — ต้องรัน
+        // "ทันทีหลัง" AuthTokenMiddleware เท่านั้น (ไม่ใช่แค่ก่อน AuditLoggingMiddleware
+        // อย่างที่ดูจะเพียงพอในตอนแรก) เพราะพบจากการทดสอบจริงว่า AiAccessControlMiddleware
+        // เอง (ซึ่งรันก่อน WorkspaceContextMiddleware) มี AuditTrailRepositoryInterface เป็น
+        // constructor dependency ของตัวเองอยู่แล้ว (ใช้บันทึก ai_access_denied) — PHP-DI cache
+        // instance ของ repository ใดๆ ไว้ใช้ซ้ำตลอด request เดียวกัน (ไม่ว่าจะ resolve จากที่ไหน
+        // ก่อน) ถ้า override container สายเกินไป (แม้จะก่อน AuditLoggingMiddleware เองก็ตาม)
+        // audit_trails ของ project_created จะยังได้ workspace เดิมของ session อยู่ดี เพราะ
+        // instance ถูก cache ไปแล้วจาก AiAccessControlMiddleware ตั้งแต่ต้น pipeline
+        // ดังนั้นต้อง override ให้เร็วที่สุดเท่าที่เป็นไปได้ — ทันทีที่ workspace_id ของ
+        // session ถูก set โดย AuthTokenMiddleware เสร็จ ก่อนที่ repository ใดๆ ที่ผูกกับ
+        // 'current_workspace_id' จะถูก resolve เป็นตัวแรกโดยไม่ตั้งใจ
+        ->add(new ProjectCreateWorkspaceMiddleware($container, $container->get(\App\Domain\Workspace\WorkspaceRepositoryInterface::class)))
         ->add(new AuthTokenMiddleware($container->get(PDO::class), $container));
 
     // ===== M9 UAT Runtime Fix: Web routes (browser — 302) แยกจาก API routes (JSON) =====
